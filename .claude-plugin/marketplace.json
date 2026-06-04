@@ -1,0 +1,33 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "vix-cc",
+  "description": "Token-efficient AI coding patterns for Claude Code — ported from vix",
+  "owner": {
+    "name": "back1ply",
+    "url": "https://github.com/back1ply"
+  },
+  "plugins": [
+    {
+      "name": "vix",
+      "description": "Token-efficient AI coding patterns for Claude Code — ported from vix (github.com/get-vix/vix). Provides structured Explore→Plan→Implement→Review workflow, tool discipline skills, and a TypeScript MCP server with minified file reads/edits and background bash jobs.",
+      "author": {
+        "name": "back1ply",
+        "url": "https://github.com/back1ply"
+      },
+      "homepage": "https://github.com/back1ply/vix-cc",
+      "repository": "https://github.com/back1ply/vix-cc.git",
+      "license": "MIT",
+      "keywords": ["vix", "mcp", "workflow", "token-efficient", "agents", "skills"],
+      "category": "development",
+      "tags": ["ai-coding", "workflow", "token-savings", "multi-agent"],
+      "mcpServers": {
+        "vix": {
+          "description": "vix MCP server — minified file reads/edits, background bash jobs, Python tool chains",
+          "command": "node",
+          "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-server/dist/index.js"]
+        }
+      },
+      "source": "./"
+    }
+  ]
+}
