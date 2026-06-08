@@ -1,0 +1,10 @@
+{
+  "name": "vix",
+  "description": "Token-efficient AI coding patterns for Claude Code — ported from vix (github.com/get-vix/vix). Provides structured Explore→Plan→Implement→Review workflow, tool discipline skills, and a TypeScript MCP server with minified file reads/edits and background bash jobs.",
+  "mcpServers": {
+    "vix": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-server/dist/index.js"]
+    }
+  }
+}

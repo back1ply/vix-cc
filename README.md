@@ -4,7 +4,7 @@ A Claude Code plugin porting the core of [vix](https://github.com/get-vix/vix) �
 
 ## What it does
 
-- **Structured workflow**: Explore → Plan → Implement → Review cycle via 5 coordinated agents
+- **Structured workflow**: Explore → Plan → Implement → Review cycle via 6 coordinated agents
 - **Token-efficient reads**: `vix_read_minified` strips comments and collapses whitespace before returning file content
 - **Minified edits**: `vix_edit_minified` matches and replaces in the minified representation, then formats
 - **Background jobs**: `vix_background_bash` spawns detached processes and returns poll instructions
@@ -41,7 +41,8 @@ Then add the plugin directory in Claude Code settings.
 
 | Agent | Model | Role |
 |-------|-------|------|
-| `vix-explore` | Sonnet | Read-only codebase exploration, produces a 2-3 sentence report |
+| `vix-explore` | Sonnet | Read-only codebase exploration, produces a structured report |
+| `vix-general` | Opus | General-purpose catch-all for open-ended coding, debugging, and mixed tasks |
 | `vix-plan` | Opus | Produces a written implementation plan, may spawn vix-explore |
 | `vix-implement` | Opus | Executes a plan precisely, self-verifies, then stops |
 | `vix-solver` | Opus | One-pass solver for self-contained tasks, no review loop |

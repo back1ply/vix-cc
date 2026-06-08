@@ -1,0 +1,4 @@
+mcp-server/node_modules/
+mcp-server/*.log
+mcp-server/sync-local.mjs
+.claude/
