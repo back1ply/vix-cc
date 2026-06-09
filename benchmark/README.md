@@ -2,88 +2,132 @@
 
 Evaluates the [vix-cc](https://github.com/back1ply/vix-cc) Claude Code plugin against [Terminal-Bench 2.0](https://huggingface.co/datasets/terminal-bench/terminal-bench-2) using [Harbor](https://github.com/av/harbor).
 
-## How it works
+## Layout
 
-`ClaudeCodeVix` (in `agent.py`) extends Harbor's built-in `ClaudeCode` agent:
-- Clones vix-cc into `/opt/vix-cc` inside each sandbox
-- Passes `--plugin-dir /opt/vix-cc` to every `claude` invocation
-- Sets `ENABLE_PROMPT_CACHING_1H=1` to reduce API cost (~6× savings vs default 5-min cache TTL)
+```
+benchmark/
+  run.py              # unified entry point — all providers, all agents
+  agents/
+    vix.py            # ClaudeCodeVix: Claude Code + vix-cc plugin
+    openrouter.py     # OpenRouterAgent: any OpenRouter model, no Claude CLI
+  configs/
+    e2b.yaml          # E2B sandbox (recommended)
+    modal.yaml        # Modal sandbox
+    daytona.yaml      # Daytona sandbox
+    openrouter.yaml   # E2B + OpenRouter agent
+  providers/
+    daytona.py        # Daytona sandbox management (list/delete sandboxes)
+  jobs/               # run outputs (gitignored)
+```
 
-## Setup
+## Prerequisites
 
+**Harbor** (Python 3.12+):
 ```bash
-# Install Harbor with all sandbox providers
 uv tool install 'harbor[daytona,e2b,modal]' --python python3.12
-
-# Required env vars (provider-dependent)
-export ANTHROPIC_API_KEY=...
-export E2B_API_KEY=...         # E2B
-export OPENROUTER_API_KEY=...  # OpenRouter (no Anthropic key needed)
-# Modal uses ~/.modal.toml — run: modal token new
+harbor --version   # 0.13.1+
 ```
 
-## Running
+**Known Harbor patch** — E2B free tier caps sandbox lifetime at 1 hour; Harbor hardcodes 24h.
+Fix once after installing:
+```python
+# Edit: $(uv tool dir harbor)/Lib/site-packages/harbor/environments/e2b.py
+# Find:    timeout=86_400,
+# Replace: timeout=3_600,
+```
 
-### E2B (recommended)
+**API keys** (set per provider):
+```bash
+# E2B (recommended)
+export ANTHROPIC_API_KEY=sk-ant-...
+export E2B_API_KEY=e2b_...
 
-E2B builds sandbox images from Dockerfiles — no private-snapshot quota issues.
+# Modal
+export ANTHROPIC_API_KEY=sk-ant-...
+modal token new          # writes ~/.modal.toml
+
+# Daytona
+export ANTHROPIC_API_KEY=sk-ant-...
+export DAYTONA_API_KEY=dtn_...
+
+# OpenRouter (no Anthropic key needed)
+export OPENROUTER_API_KEY=sk-or-...
+export E2B_API_KEY=e2b_...
+```
+
+## Quick start
 
 ```bash
-python benchmark/e2b_run.py              # 5-task trial
-python benchmark/e2b_run.py --tasks 20
-python benchmark/e2b_run.py --full       # all 89 tasks
+# 5-task trial on E2B (default)
+python benchmark/run.py
+
+# Full 89-task run
+python benchmark/run.py --full
+
+# Different provider
+python benchmark/run.py --provider modal
+python benchmark/run.py --provider daytona
+
+# Override model
+python benchmark/run.py --model claude-sonnet-4-6
+
+# OpenRouter — free models, no Anthropic key
+python benchmark/run.py --agent openrouter
+python benchmark/run.py --agent openrouter --model "google/gemini-2.0-flash-exp:free"
+python benchmark/run.py --agent openrouter --model "deepseek/deepseek-r1-0528:free"
+python benchmark/run.py --agent openrouter --model "meta-llama/llama-3.3-70b-instruct:free"
 ```
 
-### Modal
+## Daytona sandbox management
+
+Daytona sandboxes can leak on task failures and eat quota. Use these to inspect and clean up:
 
 ```bash
-python benchmark/modal_run.py            # 5-task trial
-python benchmark/modal_run.py --full
+python benchmark/run.py --provider daytona --manage status
+python benchmark/run.py --provider daytona --manage sandboxes
+python benchmark/run.py --provider daytona --manage sandboxes --delete-errors
+python benchmark/run.py --provider daytona --manage sandboxes --delete-all
+python benchmark/run.py --provider daytona --manage snapshots
 ```
 
-### Daytona
+E2B and Modal are fully ephemeral — no management needed.
 
-```bash
-python benchmark/daytona_manage.py run            # 5-task trial
-python benchmark/daytona_manage.py run --full
-python benchmark/daytona_manage.py sandboxes --delete-all  # cleanup
-```
+## Agents
 
-### OpenRouter (no Anthropic key — baseline only, vix-cc not active)
+| Agent | Key | Model | vix-cc active | Purpose |
+|-------|-----|-------|---------------|---------|
+| `vix` | `ANTHROPIC_API_KEY` | Claude Haiku/Sonnet/Opus | ✅ | Benchmark vix-cc |
+| `openrouter` | `OPENROUTER_API_KEY` | Any OpenRouter model | ❌ | Baseline comparison |
 
-```bash
-python benchmark/openrouter_run.py                                           # 5-task trial, Gemini Flash
-python benchmark/openrouter_run.py --model "google/gemini-2.0-flash-exp:free"
-python benchmark/openrouter_run.py --model "deepseek/deepseek-r1-0528:free"
-python benchmark/openrouter_run.py --full
-```
+The `vix` agent clones vix-cc into each sandbox and passes `--plugin-dir` to Claude Code.
+The `openrouter` agent is a lightweight bash-loop with no CLI overhead.
 
-## Files
+## Provider comparison
 
-| File | Purpose |
-|------|---------|
-| `agent.py` | `ClaudeCodeVix` Harbor agent (vix-cc + Claude Code) |
-| `openrouter_agent.py` | Lightweight bash-loop agent for any OpenRouter model |
-| `config-e2b.yaml` | E2B environment, Haiku model |
-| `config-modal.yaml` | Modal environment, Haiku model |
-| `config.yaml` | Daytona environment, Haiku model |
-| `config-openrouter.yaml` | E2B environment, OpenRouter model |
-| `e2b_run.py` | E2B runner |
-| `modal_run.py` | Modal runner |
-| `daytona_manage.py` | Daytona runner + sandbox management |
-| `openrouter_run.py` | OpenRouter runner |
-| `check_env.sh` | Preflight key/import check |
+| Provider | Sandbox | Concurrency | Management | Notes |
+|----------|---------|-------------|------------|-------|
+| E2B | Dockerfile-based | 2 | None (ephemeral) | Recommended |
+| Modal | Dockerfile-based | 2 | None (ephemeral) | ~2× slower than E2B |
+| Daytona | Snapshot-based | 1 (free tier) | Required | ~22/89 tasks fail on free tier (private snapshots) |
 
-## Known issues
+## Troubleshooting
 
-- **Harbor E2B timeout**: Harbor 0.13.1 hardcodes `timeout=86400` when creating E2B sandboxes. E2B free tier caps at 3600 s. Patch: change `timeout=86_400` → `timeout=3_600` in `harbor/environments/e2b.py`.
-- **Daytona free tier**: ~22 tasks require private snapshot images unavailable on the free tier (`build-pov-ray`, `make-mips-interpreter`, `circuit-fibsqrt`, etc.) — expect ~64/89 infra failures.
-- **Harbor `model_name` placement**: must be at the agent level in config YAML, not inside `kwargs`.
+**`SandboxException: 400: Timeout cannot be greater than 1 hours`**
+→ Apply the Harbor E2B timeout patch (see Prerequisites).
+
+**`DaytonaNotFoundError` on ~22 tasks**
+→ Private snapshot images unavailable on Daytona free tier. Not fixable in config.
+
+**`model_name` crash in Harbor 0.13.1**
+→ `model_name` must be at agent level in YAML, not inside `kwargs`.
+
+**`NonZeroAgentExitCodeError`**
+→ The agent process exited non-zero inside the sandbox. Check `jobs/<run>/<task>/exception.txt`.
 
 ## Results
 
-| Provider | Agent | Model | Mean | Passed | Notes |
-|----------|-------|-------|------|--------|-------|
-| Daytona | ClaudeCodeVix | Haiku 4.5 | 0.124 | 11/25 ran | 64/89 infra failures (free tier) |
-| E2B | ClaudeCodeVix | Haiku 4.5 | 0.200 | 1/5 trial | Clean infra |
-| Modal | ClaudeCodeVix | Haiku 4.5 | 0.000 | 0/5 trial | Clean infra, small sample |
+| Date | Provider | Agent | Model | Mean | Tasks |
+|------|----------|-------|-------|------|-------|
+| 2026-06-09 | Daytona | vix | Haiku 4.5 | 0.124 | 11/25 ran (64/89 infra failures) |
+| 2026-06-09 | E2B | vix | Haiku 4.5 | 0.200 | 1/5 trial |
+| 2026-06-09 | Modal | vix | Haiku 4.5 | 0.000 | 0/5 trial (small sample) |

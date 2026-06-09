@@ -1,0 +1,14 @@
+environment:
+  type: e2b
+
+agents:
+  - import_path: "benchmark.agents.openrouter:OpenRouterAgent"
+    model_name: "google/gemini-2.5-flash-preview-05-20"
+
+datasets:
+  - name: "terminal-bench/terminal-bench-2"
+
+n_concurrent: 2
+n_attempts: 1
+timeout_multiplier: 1.5
+agent_setup_timeout_multiplier: 1.0  # no CLI to install

@@ -1,0 +1,17 @@
+environment:
+  type: daytona
+  kwargs:
+    auto_stop_interval_mins: 1    # stop after 1 min inactivity
+    auto_delete_interval_mins: 0  # delete immediately on stop — prevents 30 GiB quota bleed
+
+agents:
+  - import_path: "benchmark.agents.vix:ClaudeCodeVix"
+    model_name: "claude-haiku-4-5"
+
+datasets:
+  - name: "terminal-bench/terminal-bench-2"
+
+n_concurrent: 1              # free tier: 30 GiB quota exhausts with 2 concurrent
+n_attempts: 1
+timeout_multiplier: 1.5
+agent_setup_timeout_multiplier: 5.0  # Daytona image starts can take 25+ min

@@ -1,0 +1,14 @@
+environment:
+  type: modal
+
+agents:
+  - import_path: "benchmark.agents.vix:ClaudeCodeVix"
+    model_name: "claude-haiku-4-5"
+
+datasets:
+  - name: "terminal-bench/terminal-bench-2"
+
+n_concurrent: 2
+n_attempts: 1
+timeout_multiplier: 1.5
+agent_setup_timeout_multiplier: 2.0
