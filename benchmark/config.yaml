@@ -1,0 +1,29 @@
+# Harbor job config — vix-cc on Terminal-Bench 2.0
+# Run from the vix-cc repo root:
+#   PYTHONPATH=. harbor run -c benchmark/config.yaml
+#
+# PYTHONPATH=. is required so Harbor can import benchmark.agent.
+#
+# Prerequisites:
+#   export ANTHROPIC_API_KEY=sk-ant-...
+#   export DAYTONA_API_KEY=dtn_...
+#   export GITHUB_TOKEN=ghp_...   # needed while repo is private
+
+environment:
+  type: daytona
+  kwargs:
+    auto_stop_interval_mins: 1    # stop sandbox 1 min after inactivity
+    auto_delete_interval_mins: 0  # delete immediately after stop (ephemeral) — frees 30 GiB quota automatically
+
+agents:
+  - import_path: "benchmark.agent:ClaudeCodeVix"
+    model_name: "claude-haiku-4-5"  # ~20x cheaper than Opus; swap for claude-sonnet-4-5 or claude-opus-4-5 for quality
+
+datasets:
+  - name: "terminal-bench/terminal-bench-2"
+
+# Tune these before a full run
+n_concurrent: 1              # keep at 1 — free Daytona tier hits 30 GiB with 2 concurrent sandboxes
+n_attempts: 1
+timeout_multiplier: 1.5      # Terminal-Bench tasks can be slow; extra headroom
+agent_setup_timeout_multiplier: 5.0  # vix-cc install (git+npm+clone) is slower; some images take 25+ min

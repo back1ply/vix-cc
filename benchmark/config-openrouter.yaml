@@ -1,0 +1,28 @@
+# Harbor job config — OpenRouter agent on Terminal-Bench 2.0 (E2B environment)
+# No Claude CLI overhead — LLM calls go directly via OpenRouter API from the host.
+#
+# Prerequisites:
+#   export ANTHROPIC_API_KEY=  (not needed)
+#   export OPENROUTER_API_KEY=sk-or-...
+#
+# Free models to try:
+#   google/gemini-2.5-flash-preview-05-20   (fast, capable, cheap)
+#   google/gemini-2.0-flash-exp:free        (free tier, rate-limited)
+#   meta-llama/llama-3.3-70b-instruct:free  (free tier)
+#   deepseek/deepseek-r1-0528:free          (free, strong reasoning)
+#   microsoft/phi-4-reasoning-plus:free     (free)
+
+environment:
+  type: e2b
+
+agents:
+  - import_path: "benchmark.openrouter_agent:OpenRouterAgent"
+    model_name: "google/gemini-2.5-flash-preview-05-20"
+
+datasets:
+  - name: "terminal-bench/terminal-bench-2"
+
+n_concurrent: 2
+n_attempts: 1
+timeout_multiplier: 1.5
+agent_setup_timeout_multiplier: 2.0
