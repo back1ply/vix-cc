@@ -76,6 +76,9 @@ def delete_file(path):
         return {"success": False, "error": str(e)}
 
 `;
+function hasStdout(err) {
+    return err !== null && typeof err === 'object' && 'stdout' in err;
+}
 function makeToolHandlers(cwd) {
     const handlers = new Map();
     handlers.set('read_file', async (p) => {
@@ -107,7 +110,7 @@ function makeToolHandlers(cwd) {
             return out;
         }
         catch (err) {
-            if (err && typeof err === 'object' && 'stdout' in err) {
+            if (hasStdout(err)) {
                 return String(err.stdout ?? '');
             }
             throw err;

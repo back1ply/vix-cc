@@ -84,6 +84,10 @@ def delete_file(path):
 
 `;
 
+function hasStdout(err: unknown): err is { stdout: unknown } {
+  return err !== null && typeof err === 'object' && 'stdout' in err;
+}
+
 type ToolHandler = (params: Record<string, unknown>) => Promise<string>;
 
 function makeToolHandlers(cwd: string): Map<string, ToolHandler> {
@@ -120,7 +124,7 @@ function makeToolHandlers(cwd: string): Map<string, ToolHandler> {
       const out = execSync(String(p['command']), { cwd, timeout: 30000, encoding: 'utf8' });
       return out;
     } catch (err: unknown) {
-      if (err && typeof err === 'object' && 'stdout' in err) {
+      if (hasStdout(err)) {
         return String((err as { stdout: unknown }).stdout ?? '');
       }
       throw err;
