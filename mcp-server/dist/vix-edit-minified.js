@@ -43,10 +43,13 @@ async function doEdit(args, readFiles) {
     const minified = lang ? await minify(content, lang) : content;
     const count = minified.split(old_string).length - 1;
     if (count === 0) {
-        throw new Error(`vix_edit_minified: old_string not found in minified representation of ${path}`);
+        throw new Error(`vix_edit_minified: old_string not found in minified representation of ${path}. ` +
+            `old_string must be copied from vix_read_minified output (comments stripped, whitespace collapsed), not from the original source. ` +
+            `Re-read the file with vix_read_minified and copy the exact text.`);
     }
     if (count > 1) {
-        throw new Error(`vix_edit_minified: old_string matches ${count} times in ${path} — must match exactly once`);
+        throw new Error(`vix_edit_minified: old_string matches ${count} times in ${path} — must match exactly once. ` +
+            `Include more surrounding text in old_string to make it unique.`);
     }
     const replaced = minified.replace(old_string, new_string);
     await writeFile(path, replaced, 'utf8');

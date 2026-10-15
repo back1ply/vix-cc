@@ -3,6 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { ensureInit } from './minifier.js';
@@ -20,8 +21,7 @@ const server = new Server(
   { capabilities: { tools: {} } }
 );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
+const TOOLS: Tool[] = [
     {
       name: 'vix_read_minified',
       description:
@@ -41,6 +41,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['path', 'reason'],
       },
+      annotations: { readOnlyHint: true },
     },
     {
       name: 'vix_edit_minified',
@@ -64,6 +65,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['path', 'old_string', 'new_string'],
       },
+      annotations: { readOnlyHint: false, destructiveHint: true },
     },
     {
       name: 'vix_background_bash',
@@ -84,6 +86,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['command', 'reason'],
       },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     },
     {
       name: 'vix_tool_chain',
@@ -108,9 +111,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['workflow', 'description'],
       },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
     },
-  ],
-}));
+];
+
+server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+
+/** Returns an error message naming the bad field, or null. Covers `required` + primitive types — all these schemas use. */
+function checkArgs(tool: Tool, args: Record<string, unknown>): string | null {
+  const properties = (tool.inputSchema.properties ?? {}) as Record<string, { type?: string }>;
+  const required = tool.inputSchema.required ?? [];
+  const missing = required.filter((k) => args[k] === undefined || args[k] === null);
+  if (missing.length) return `${tool.name}: missing required argument(s): ${missing.join(', ')}. Required: ${required.join(', ')}.`;
+  for (const [k, v] of Object.entries(args)) {
+    const want = properties[k]?.type;
+    if (want && typeof v !== want) return `${tool.name}: argument '${k}' must be a ${want}, got ${typeof v}.`;
+  }
+  return null;
+}
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
@@ -120,6 +138,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     content: [{ type: 'text' as const, text }],
     isError: true,
   });
+
+  const tool = TOOLS.find((t) => t.name === name);
+  if (!tool) return err(`Unknown tool: ${name}. Available: ${TOOLS.map((t) => t.name).join(', ')}`);
+  const bad = checkArgs(tool, (args ?? {}) as Record<string, unknown>);
+  if (bad) return err(bad);
 
   try {
     switch (name) {
