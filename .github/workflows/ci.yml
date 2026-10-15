@@ -1,0 +1,25 @@
+name: CI
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp-server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mcp-server/package-lock.json
+      - run: npm ci
+      # tsc directly: the build script's postbuild kills local server processes
+      - run: npx tsc
+      # the plugin runs the committed dist/, so it must match src/
+      - name: dist is up to date
+        run: git diff --exit-code -- dist
+      - run: npm run probe
