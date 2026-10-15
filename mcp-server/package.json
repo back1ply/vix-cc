@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc",
     "postbuild": "node --input-type=module -e \"import('./sync-local.mjs').catch(()=>{})\"",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "probe": "npx -y @modelcontextprotocol/inspector@2.11.0 --cli node dist/index.js --method tools/list"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
