@@ -1,0 +1,245 @@
+// Worker Pool - C++ fixture for tree-sitter minifier testing
+#include <iostream>
+#include <vector>
+#include <queue>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <variant>
+#include <any>
+#include <string>
+#include <numeric>
+#include <atomic>
+#include <tuple>
+#include <array>
+
+/*
+ * Thread-safe worker pool implementation using modern C++ features.
+ * Demonstrates templates, concepts, RAII, smart pointers, and more.
+ */
+namespace pool { // 14. Namespace
+
+constexpr int default_thread_count() { return 4; } // 9. Constexpr
+constexpr int max_queue_size() { return 1024; }
+
+enum class TaskState : int { // 8. Enum class
+    Idle = 0, Pending = 1, Running = 2, Complete = 3, Failed = 4, Cancelled = 5
+};
+
+constexpr const char* pool_banner = R"(  === Worker Pool v2.0 ===
+)"; // 20. Raw string literal
+
+// 2. Concepts (C++20)
+template <typename T>
+concept Callable = requires(T t) { { t() } -> std::convertible_to<void>; };
+template <typename T>
+concept Printable = requires(T t, std::ostream& os) { { os << t } -> std::same_as<std::ostream&>; };
+
+template <typename Result = int> // 1. Class template
+class Task {
+public:
+    using result_type = Result;
+    Task(int id, std::function<Result()> fn)
+        : id_(id), fn_(std::move(fn)), state_(TaskState::Pending) {}
+    virtual ~Task() = default; // 10. Virtual
+    virtual TaskState execute() {
+        state_ = TaskState::Running;
+        try { result_ = fn_(); state_ = TaskState::Complete; }
+        catch (...) { state_ = TaskState::Failed; }
+        return state_;
+    }
+    int id() const { return id_; }
+    TaskState state() const { return state_; }
+    std::optional<Result> result() const { return result_; } // 17. optional
+protected:
+    int id_; std::function<Result()> fn_;
+    TaskState state_; std::optional<Result> result_;
+};
+
+template <typename Result = int> // 10. Override
+class RetryableTask : public Task<Result> {
+    int max_retries_;
+public:
+    RetryableTask(int id, std::function<Result()> fn, int retries = 3)
+        : Task<Result>(id, std::move(fn)), max_retries_(retries) {}
+    TaskState execute() override {
+        for (int attempt = 0; attempt < max_retries_; ++attempt) {
+            if (Task<Result>::execute() == TaskState::Complete) return TaskState::Complete;
+        }
+        return this->state_;
+    }
+};
+
+using TaskResult = std::variant<int, double, std::string>; // 17. variant
+
+struct ResultVisitor { // 16. Operator overloading
+    std::string operator()(int v) const { return "int:" + std::to_string(v); }
+    std::string operator()(double v) const { return "double:" + std::to_string(v); }
+    std::string operator()(const std::string& v) const { return "str:" + v; }
+};
+
+class ScopedLog { // 6. RAII
+    std::string msg_;
+public:
+    explicit ScopedLog(std::string msg) : msg_(std::move(msg)) { std::cout << "[BEGIN] " << msg_ << "\n"; }
+    ~ScopedLog() { std::cout << "[END]   " << msg_ << "\n"; }
+    ScopedLog(const ScopedLog&) = delete;
+    ScopedLog& operator=(const ScopedLog&) = delete;
+};
+
+template <Callable Fn> void run_once(Fn&& fn) { fn(); } // 1+2. Template + concept
+
+template <Printable... Args> // 5. Fold expression
+void log_all(std::ostream& os, Args&&... args) { ((os << args << " "), ...); os << "\n"; }
+
+template <typename T> std::string type_label() { // 4. If constexpr
+    if constexpr (std::is_integral_v<T>) return "integral";
+    else if constexpr (std::is_floating_point_v<T>) return "floating";
+    else return "other";
+}
+
+class WorkerPool {
+public:
+    explicit WorkerPool(int num_threads = default_thread_count()) // 19. Initializer list
+        : stop_(false), active_count_(0) {
+        for (int i = 0; i < num_threads; ++i)
+            workers_.emplace_back([this, i]() { worker_loop(i); }); // 11. Lambda captures
+    }
+    ~WorkerPool() { shutdown(); }
+    void submit(std::unique_ptr<Task<int>>&& task) { // 18. Rvalue ref
+        { std::lock_guard<std::mutex> lk(mtx_); tasks_.push(std::move(task)); }
+        cv_.notify_one();
+    }
+    void shutdown() {
+        { std::lock_guard<std::mutex> lk(mtx_); stop_ = true; }
+        cv_.notify_all();
+        for (auto& w : workers_) if (w.joinable()) w.join();
+    }
+    int active_count() const { return active_count_.load(); }
+private:
+    void worker_loop(int worker_id) {
+        while (true) {
+            std::unique_ptr<Task<int>> task;
+            {
+                std::unique_lock<std::mutex> lk(mtx_);
+                cv_.wait(lk, [this] { return stop_ || !tasks_.empty(); });
+                if (stop_ && tasks_.empty()) return;
+                task = std::move(tasks_.front()); tasks_.pop();
+            }
+            active_count_.fetch_add(1);
+            { ScopedLog sl("w" + std::to_string(worker_id) + "-t" + std::to_string(task->id())); task->execute(); }
+            active_count_.fetch_sub(1);
+        }
+    }
+    std::vector<std::thread> workers_;
+    std::queue<std::unique_ptr<Task<int>>> tasks_;
+    std::mutex mtx_; std::condition_variable cv_;
+    bool stop_; std::atomic<int> active_count_;
+};
+
+struct PoolStats { // 16. Operator overloading
+    int tasks_completed = 0; int tasks_failed = 0; double total_time_ms = 0.0;
+    PoolStats operator+(const PoolStats& o) const {
+        return {tasks_completed + o.tasks_completed, tasks_failed + o.tasks_failed, total_time_ms + o.total_time_ms};
+    }
+    PoolStats& operator+=(const PoolStats& o) {
+        tasks_completed += o.tasks_completed; tasks_failed += o.tasks_failed;
+        total_time_ms += o.total_time_ms; return *this;
+    }
+    friend std::ostream& operator<<(std::ostream& os, const PoolStats& s) {
+        return os << "completed=" << s.tasks_completed << " failed=" << s.tasks_failed << " time=" << s.total_time_ms;
+    }
+};
+
+} // namespace pool
+
+namespace casts { // 15. static_cast, dynamic_cast, reinterpret_cast
+    struct Base { virtual ~Base() = default; virtual int value() const { return 0; } };
+    struct Derived : Base {
+        int val; explicit Derived(int v) : val(v) {}
+        int value() const override { return val; }
+    };
+    void demonstrate() {
+        int x = 42;
+        double d = static_cast<double>(x); (void)d;
+        auto ptr = reinterpret_cast<std::uintptr_t>(&x); (void)ptr;
+        std::unique_ptr<Base> base = std::make_unique<Derived>(99);
+        if (auto* dp = dynamic_cast<Derived*>(base.get())) std::cout << "cast:" << dp->value() << "\n";
+    }
+}
+
+int main() {
+    using namespace pool;
+
+    // 20. Raw string literal
+    std::cout << pool_banner;
+
+    // 4. If constexpr via type_label
+    std::cout << "int is " << type_label<int>() << "\n";
+    std::cout << "double is " << type_label<double>() << "\n";
+    std::cout << "string is " << type_label<std::string>() << "\n";
+
+    // 5. Fold expression
+    log_all(std::cout, "pool", "starting", "with", default_thread_count(), "threads");
+
+    // 12. Range-based for + 19. Initializer list
+    std::vector<int> task_ids = {10, 20, 30, 40, 50, 60, 70, 80};
+
+    // 7. Smart pointers (unique_ptr)
+    auto pool_ptr = std::make_unique<WorkerPool>(4);
+
+    // 3. Structured bindings
+    std::array<std::pair<int, std::string>, 3> meta = {{{1, "low"}, {2, "medium"}, {3, "high"}}};
+    for (const auto& [priority, label] : meta)
+        std::cout << "priority " << priority << " = " << label << "\n";
+
+    // 11. Lambda: by value [id], by ref [&multiplier], init capture [offset=100]
+    int multiplier = 3;
+    for (int id : task_ids) {
+        auto task = std::make_unique<Task<int>>(id, [id, &multiplier, offset = 100]() -> int {
+            return id * multiplier + offset;
+        });
+        pool_ptr->submit(std::move(task));
+    }
+
+    // 18. std::move + retryable task
+    auto retry_task = std::make_unique<RetryableTask<int>>(999, []() -> int { return 42; }, 3);
+    pool_ptr->submit(std::move(retry_task));
+
+    pool_ptr->shutdown();
+    pool_ptr.reset(); // 7. unique_ptr reset
+
+    // 17. std::variant
+    std::vector<TaskResult> results = {42, 3.14, std::string("done")};
+    ResultVisitor visitor;
+    for (const auto& r : results) std::cout << std::visit(visitor, r) << "\n"; // 12. Range-based for
+
+    // 17. std::any
+    std::any payload = std::string("worker-pool-payload");
+    if (payload.has_value() && payload.type() == typeid(std::string))
+        std::cout << "any: " << std::any_cast<std::string>(payload) << "\n";
+
+    auto stats = PoolStats{8, 1, 45.2}; // 13. auto deduction
+    auto more  = PoolStats{2, 0, 10.1};
+    stats += more;
+    std::cout << "stats: " << stats << "\n";
+
+    casts::demonstrate(); // 15. Casts
+
+    auto sum_all = [](auto... vals) { return (vals + ...); }; // 5. Fold
+    std::cout << "fold sum: " << sum_all(1, 2, 3, 4, 5) << "\n";
+
+    auto [total, avg] = std::make_tuple(stats.tasks_completed, // 3. Structured binding
+                                         stats.total_time_ms / stats.tasks_completed);
+    std::cout << "total=" << total << " avg_ms=" << avg << "\n";
+
+    auto shared_stats = std::make_shared<PoolStats>(stats); // 7. shared_ptr
+    std::cout << "shared stats: " << *shared_stats << "\n";
+
+    run_once([&] { std::cout << "run_once executed\n"; }); // 1+2. Template+concept
+    std::cout << "all tasks finished\n";
+    return 0;
+}

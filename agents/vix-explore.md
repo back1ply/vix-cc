@@ -20,7 +20,7 @@ description: |
   vix-plan spawns vix-explore as a subagent for targeted investigation.
   </commentary>
   </example>
-model: sonnet
+model: inherit
 color: cyan
 tools: ["Read", "Glob", "Grep", "Bash", "LSP", "mcp__plugin_vix_vix__vix_read_minified"]
 ---

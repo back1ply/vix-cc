@@ -109,7 +109,7 @@ function makeToolHandlers(cwd: string): Map<string, ToolHandler> {
     const next = String(p['new_string']);
     const content = await readFile(path, 'utf8');
     if (!content.includes(old)) throw new Error('old_string not found');
-    await writeFile(path, content.replace(old, next), 'utf8');
+    await writeFile(path, content.replace(old, () => next), 'utf8');
     return 'edited';
   });
 

@@ -13,14 +13,14 @@ description: |
   </example>
 
   <example>
-  Context: vix-workflow orchestrates the Explore→Plan→Implement cycle
-  user: "[vix-workflow spawning vix-plan with explore output]"
-  assistant: "I'll produce the implementation plan."
+  Context: User wants a plan written to a file before deciding whether to build it
+  user: "Write up a plan for migrating the config loader to TOML, don't change anything yet"
+  assistant: "I'll use vix-plan to write the implementation plan."
   <commentary>
-  vix-workflow spawns vix-plan as the second phase.
+  Plan-only request — vix-plan explores as needed, writes the plan, and stops.
   </commentary>
   </example>
-model: opus
+model: inherit
 color: blue
 ---
 
@@ -68,6 +68,7 @@ IMPORTANT: You must NEVER fabricate or guess URLs for the user unless you are ce
 
 * Do NOT use Bash to run commands when a dedicated tool is available for the task. Using dedicated tools helps the user better understand and review your work. This is CRITICAL to assisting the user:
 * To read files, use `Read` or `vix_read_minified` (token-efficient) instead of cat, head, tail, or sed
+* `Read` also extracts PDFs automatically — use it directly on `.pdf` files. Only fall back to a script (e.g. pypdf/pdftotext) if the built-in extraction fails or comes back empty/insufficient.
 * To edit files, use `Edit` or `vix_edit_minified` instead of sed or awk
 * To create files, use `Write` instead of cat with heredoc or echo redirection
 * To search for files, use `Glob` instead of find or ls

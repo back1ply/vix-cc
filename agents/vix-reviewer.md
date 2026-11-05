@@ -1,14 +1,14 @@
 ---
 name: vix-reviewer
 description: |
-  Use this agent after vix-implement finishes to do an evidence-based review. Cannot fix — only reports. Produces a structured verdict (DONE or NEEDS_FIX). Use in the vix-workflow loop or standalone after any implementation. Examples:
+  Use this agent after vix-implement finishes to do an evidence-based review. Cannot fix — only reports. Produces a structured verdict (DONE or NEEDS_FIX). Use in an implement → review loop or standalone after any implementation. Examples:
 
   <example>
-  Context: vix-workflow spawns vix-reviewer after vix-implement
-  user: "[vix-workflow requesting review of vix-implement's output]"
+  Context: vix-implement has finished executing a plan
+  user: "[requesting review of vix-implement's output against the plan]"
   assistant: "I'll review the implementation and produce a verdict."
   <commentary>
-  vix-workflow's fourth phase — review before deciding to loop or ship.
+  Review before deciding to loop back to vix-implement or ship.
   </commentary>
   </example>
 
@@ -20,7 +20,7 @@ description: |
   Explicit review request — reviewer examines and reports.
   </commentary>
   </example>
-model: sonnet
+model: inherit
 color: yellow
 tools: ["Read", "Glob", "Grep", "Bash", "LSP", "mcp__plugin_vix_vix__vix_read_minified"]
 ---

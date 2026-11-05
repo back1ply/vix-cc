@@ -1,5 +1,5 @@
 import { readFile } from 'fs/promises';
-import { minifyFile } from './minifier.js';
+import { detectLanguage, ensureInit, minify } from './minifier.js';
 
 export interface ReadMinifiedArgs {
   path: string;
@@ -8,11 +8,20 @@ export interface ReadMinifiedArgs {
   reason: string;
 }
 
+// Upstream sliceLines: apply 1-based offset/limit to text.
+function sliceLines(lines: string[], offset?: number, limit?: number): { start: number; lines: string[] } {
+  let start = offset != null && offset >= 1 ? offset - 1 : 0;
+  let end = limit != null ? start + limit : lines.length;
+  if (start > lines.length) start = lines.length;
+  if (end > lines.length) end = lines.length;
+  return { start, lines: lines.slice(start, end) };
+}
+
 export async function handleReadMinified(
   args: ReadMinifiedArgs,
   readFiles: Set<string>
 ): Promise<string> {
-  const { path, offset, limit, reason: _reason } = args;
+  const { path, offset, limit } = args;
 
   let content: string;
   try {
@@ -22,22 +31,18 @@ export async function handleReadMinified(
     throw new Error(`vix_read_minified: cannot read ${path}: ${msg}`);
   }
 
-  // Apply line range before minifying so tree-sitter parses the right slice
-  const lines = content.split('\n');
-  const startLine = offset != null ? Math.max(0, offset - 1) : 0;
-  const endLine = limit != null ? Math.min(lines.length, startLine + limit) : lines.length;
-  const sliced = lines.slice(startLine, endLine).join('\n');
-
-  const minified = await minifyFile(path, sliced);
-
-  // Add line numbers
-  const numberedLines = minified
-    .split('\n')
-    .map((line, i) => `${startLine + i + 1}\t${line}`)
-    .join('\n');
-
-  // Mark as read
   readFiles.add(path);
+  const sliced = sliceLines(content.split('\n'), offset, limit);
+  const lang = detectLanguage(path);
 
-  return numberedLines;
+  // Unsupported language: plain numbered read (upstream readFileImpl).
+  if (!lang) {
+    return sliced.lines.map((line, i) => `${String(sliced.start + i + 1).padStart(5)}\t${line}`).join('\n');
+  }
+
+  // Supported language: minified text, unnumbered; raw slice if it can't be
+  // minified (upstream VfsRead).
+  await ensureInit();
+  const text = sliced.lines.join('\n');
+  return (await minify(text, lang)) ?? text;
 }

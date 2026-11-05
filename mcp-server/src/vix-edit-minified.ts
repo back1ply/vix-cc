@@ -1,7 +1,6 @@
 import { readFile, writeFile } from 'fs/promises';
-import { spawn } from 'child_process';
-import { extname } from 'path';
-import { minify, detectLanguage } from './minifier.js';
+import { minifyMapped, detectLanguage, ensureInit, projectSpan } from './minifier.js';
+import { withFileLock } from './file-lock.js';
 
 export interface EditMinifiedArgs {
   path: string;
@@ -10,31 +9,48 @@ export interface EditMinifiedArgs {
   reason?: string;
 }
 
-// per-file mutex: path → promise chain
-const fileMutex = new Map<string, Promise<void>>();
+function countOccurrences(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
 
-function runFormatter(filePath: string): Promise<void> {
-  const ext = extname(filePath).toLowerCase();
-  let cmd: string;
-  let args: string[];
-
-  if (ext === '.go') {
-    cmd = 'gofmt'; args = ['-w', filePath];
-  } else if (['.ts', '.tsx', '.js', '.mjs', '.jsx'].includes(ext)) {
-    cmd = 'prettier'; args = ['--write', filePath];
-  } else if (ext === '.py') {
-    cmd = 'black'; args = [filePath];
-  } else if (ext === '.rs') {
-    cmd = 'rustfmt'; args = [filePath];
-  } else {
-    return Promise.resolve();
+// Adapt minified new_string to the file before splicing (vix-cc fix; upstream
+// splices it verbatim):
+// - Python: the minified view indents one space per level; convert continuation
+//   lines back to the indent unit the minifier detected, so blocks stay valid.
+// - CRLF files: use CRLF for inserted line breaks.
+function adaptNewString(newString: string, content: string, indentUnit: string | undefined): string {
+  let out = newString;
+  if (indentUnit !== undefined && out.includes('\n')) {
+    const unit = indentUnit;
+    out = out
+      .split('\n')
+      .map((line, i) => {
+        if (i === 0) return line;
+        const level = /^ */.exec(line)![0].length;
+        return unit.repeat(level) + line.slice(level);
+      })
+      .join('\n');
   }
+  if (content.includes('\r\n')) {
+    out = out.replace(/\r?\n/g, '\r\n');
+  }
+  return out;
+}
 
-  return new Promise((resolve) => {
-    const proc = spawn(cmd, args, { stdio: 'ignore' });
-    proc.on('close', () => resolve()); // fail gracefully — don't reject
-    proc.on('error', () => resolve());
-  });
+// Upstream fallback: plain literal edit when the file can't be minified.
+function literalEdit(path: string, content: string, old_string: string, new_string: string): string {
+  const count = countOccurrences(content, old_string);
+  if (count === 0) {
+    throw new Error(`vix_edit_minified: old_string not found in ${path}.`);
+  }
+  if (count > 1) {
+    throw new Error(
+      `vix_edit_minified: old_string matches ${count} times in ${path} — must match exactly once. ` +
+        `Include more surrounding text in old_string to make it unique.`
+    );
+  }
+  const idx = content.indexOf(old_string);
+  return content.slice(0, idx) + new_string + content.slice(idx + old_string.length);
 }
 
 async function doEdit(args: EditMinifiedArgs, readFiles: Set<string>): Promise<string> {
@@ -45,54 +61,55 @@ async function doEdit(args: EditMinifiedArgs, readFiles: Set<string>): Promise<s
       `vix_edit_minified blocked: ${path} has not been read this session. Call vix_read_minified first.`
     );
   }
+  if (old_string.length === 0) {
+    throw new Error('vix_edit_minified: old_string must not be empty.');
+  }
 
   const content = await readFile(path, 'utf8');
   const lang = detectLanguage(path);
-  const minified = lang ? await minify(content, lang) : content;
+  await ensureInit();
+  const mapped = lang ? await minifyMapped(content, lang) : null;
 
-  const count = minified.split(old_string).length - 1;
-  if (count === 0) {
-    throw new Error(
-      `vix_edit_minified: old_string not found in minified representation of ${path}. ` +
-        `old_string must be copied from vix_read_minified output (comments stripped, whitespace collapsed), not from the original source. ` +
-        `Re-read the file with vix_read_minified and copy the exact text.`
-    );
+  let updated: string;
+  if (!mapped) {
+    updated = literalEdit(path, content, old_string, new_string);
+  } else {
+    const count = countOccurrences(mapped.text, old_string);
+    if (count === 0) {
+      throw new Error(
+        `vix_edit_minified: old_string not found in minified representation of ${path}. ` +
+          `old_string must be copied from vix_read_minified output (comments stripped, whitespace collapsed), not from the original source. ` +
+          `Re-read the file with vix_read_minified and copy the exact text.`
+      );
+    }
+    if (count > 1) {
+      throw new Error(
+        `vix_edit_minified: old_string matches ${count} times in ${path} — must match exactly once. ` +
+          `Include more surrounding text in old_string to make it unique.`
+      );
+    }
+
+    // Project the match back onto the original source and splice only that
+    // range, leaving comments and formatting elsewhere untouched.
+    const outStart = mapped.text.indexOf(old_string);
+    const span = projectSpan(mapped.map, outStart, outStart + old_string.length);
+    if (!span) {
+      throw new Error(
+        'vix_edit_minified: old_string matched only inserted separators and cannot be mapped back to the source file.'
+      );
+    }
+    updated = content.slice(0, span.start) + adaptNewString(new_string, content, mapped.indent) + content.slice(span.end);
   }
-  if (count > 1) {
-    throw new Error(
-      `vix_edit_minified: old_string matches ${count} times in ${path} — must match exactly once. ` +
-        `Include more surrounding text in old_string to make it unique.`
-    );
-  }
 
-  const replaced = minified.replace(old_string, new_string);
-
-  await writeFile(path, replaced, 'utf8');
-
-  // Best-effort format; write already happened above, so we restore style only
-  await runFormatter(path);
-
+  await writeFile(path, updated, 'utf8');
   readFiles.add(path);
 
-  return `Edited ${path}: replaced 1 occurrence. Formatter applied.`;
+  return `Edited ${path} (replaced 1 occurrence).`;
 }
 
 export async function handleEditMinified(
   args: EditMinifiedArgs,
   readFiles: Set<string>
 ): Promise<string> {
-  const { path } = args;
-
-  // Serialize edits per file
-  const prev = fileMutex.get(path) ?? Promise.resolve();
-  let resolve!: () => void;
-  const next = new Promise<void>((r) => { resolve = r; });
-  fileMutex.set(path, next);
-
-  try {
-    await prev;
-    return await doEdit(args, readFiles);
-  } finally {
-    resolve();
-  }
+  return withFileLock(args.path, () => doEdit(args, readFiles));
 }

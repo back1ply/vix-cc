@@ -9,6 +9,7 @@ import {
 import { ensureInit } from './minifier.js';
 import { handleReadMinified } from './vix-read-minified.js';
 import { handleEditMinified } from './vix-edit-minified.js';
+import { handleWriteMinified } from './vix-write-minified.js';
 import { handleBackgroundBash, killAllJobs, BashJob } from './vix-background-bash.js';
 import { handleToolChain } from './vix-tool-chain.js';
 
@@ -27,7 +28,7 @@ const TOOLS: Tool[] = [
       description:
         'Read a file from disk and automatically minify it using Tree-sitter (stripping comments, collapsing whitespace) for token-efficient output. ' +
         'The minified content is exactly the code that is on disk, just with whitespace and comments removed. Optionally extract a line range before minifying. ' +
-        'Marks the file as read for the session (required before vix_edit_minified). Returns content with line numbers.',
+        'Marks the file as read for the session (required before vix_edit_minified). Files in unsupported languages are returned as-is with line numbers.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -46,9 +47,9 @@ const TOOLS: Tool[] = [
     {
       name: 'vix_edit_minified',
       description:
-        'Edit a file through the virtual filesystem. The file is minified with Tree-sitter, the match is performed on the minified representation, and a formatter restores valid source. ' +
+        'Edit a file through the virtual filesystem. The file is minified with Tree-sitter, the match is performed on the minified representation, and the replacement is spliced back into only the matched range of the original source (comments and formatting elsewhere are preserved). ' +
         'Both old_string and new_string must use the minified format (as returned by vix_read_minified). ' +
-        'The file MUST have been read with vix_read_minified first. Formatter applied after write (prettier/black/gofmt/rustfmt).',
+        'The file MUST have been read with vix_read_minified first.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -64,6 +65,22 @@ const TOOLS: Tool[] = [
           reason: { type: 'string', description: 'Why this edit is needed' },
         },
         required: ['path', 'old_string', 'new_string'],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    },
+    {
+      name: 'vix_write_minified',
+      description:
+        'Write content to a file through the virtual filesystem. The content must be provided in the minified format (as returned by vix_read_minified); after writing, a formatter restores valid source. Creates parent directories if needed. ' +
+        'If no formatter is installed for the language, the file is left in minified form and the result says so.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Absolute path to the file' },
+          content: { type: 'string', description: 'The full content to write, in minified format' },
+          reason: { type: 'string', description: 'Why this file is being written' },
+        },
+        required: ['path', 'content'],
       },
       annotations: { readOnlyHint: false, destructiveHint: true },
     },
@@ -152,6 +169,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
       case 'vix_edit_minified': {
         const result = await handleEditMinified(args as unknown as Parameters<typeof handleEditMinified>[0], readFiles);
+        return ok(result);
+      }
+      case 'vix_write_minified': {
+        const result = await handleWriteMinified(args as unknown as Parameters<typeof handleWriteMinified>[0], readFiles);
         return ok(result);
       }
       case 'vix_background_bash': {

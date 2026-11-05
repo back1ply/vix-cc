@@ -1,19 +1,22 @@
 {
   "name": "vix-mcp-server",
   "version": "1.0.0",
-  "description": "MCP server for vix-cc — token-efficient AI coding tools",
+  "description": "MCP server for vix-cc \u2014 token-efficient AI coding tools",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "postbuild": "node --input-type=module -e \"import('./sync-local.mjs').catch(()=>{})\"",
     "dev": "tsc --watch",
-    "probe": "npx -y @modelcontextprotocol/inspector@2.11.0 --cli node dist/index.js --method tools/list"
+    "probe": "npx -y @modelcontextprotocol/inspector@2.11.0 --cli node dist/index.js --method tools/list",
+    "test": "node test/golden.test.mjs && node test/edit.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "@tree-sitter-grammars/tree-sitter-kotlin": "^1.1.0",
     "tree-sitter-bash": "^0.25.1",
     "tree-sitter-c": "^0.24.1",
+    "tree-sitter-c-sharp": "^0.23.5",
     "tree-sitter-cpp": "^0.23.4",
     "tree-sitter-css": "^0.25.0",
     "tree-sitter-go": "^0.25.0",
@@ -21,6 +24,7 @@
     "tree-sitter-java": "^0.23.5",
     "tree-sitter-javascript": "^0.25.0",
     "tree-sitter-json": "^0.24.8",
+    "tree-sitter-php": "^0.24.2",
     "tree-sitter-python": "^0.25.0",
     "tree-sitter-ruby": "^0.23.1",
     "tree-sitter-rust": "^0.24.0",
@@ -30,5 +34,6 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.4.0"
-  }
+  },
+  "license": "AGPL-3.0-only"
 }

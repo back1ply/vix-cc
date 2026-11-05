@@ -1,0 +1,369 @@
+// Worker Pool - TypeScript Tree-Sitter Minifier Test Fixture
+
+// --- Enums ---
+enum WorkerState {
+  Idle = "idle",
+  Busy = "busy",
+  Draining = "draining",
+  Shutdown = "shutdown",
+}
+
+enum Priority {
+  Low = 0,
+  Medium = 5,
+  High = 10,
+  Critical = 20,
+}
+
+// --- Type aliases and template literal types ---
+type WorkerId = `w-${number}`;
+type TaskId = `t-${number}`;
+type EventName = `on${Capitalize<"start" | "complete" | "error">}`;
+type LogLevel = "debug" | "info" | "warn" | "error";
+
+// --- Mapped types ---
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+type Nullable<T> = { [K in keyof T]: T[K] | null };
+
+// --- Conditional types ---
+type IsAsync<T> = T extends (...args: any[]) => Promise<infer _> ? true : false;
+type UnwrapPromise<T> = T extends Promise<infer U> ? U : T;
+
+/* Shared interfaces for worker pool entities
+   providing identity and metrics contracts. */
+
+/**
+ * Represents an entity that can be uniquely identified.
+ * Implemented by workers, tasks, and the pool itself.
+ */
+interface Identifiable {
+  readonly id: string;
+}
+
+interface HasMetrics {
+  readonly completedTasks: number;
+  readonly failedTasks: number;
+}
+
+interface WorkerConfig extends Identifiable {
+  minWorkers: number;
+  maxWorkers: number;
+  idleTimeoutMs: number;
+  retryLimit: number;
+}
+
+// --- Discriminated unions ---
+type TaskEvent =
+  | { kind: "submitted"; taskId: TaskId; timestamp: number }
+  | { kind: "started"; taskId: TaskId; workerId: WorkerId; timestamp: number }
+  | { kind: "completed"; taskId: TaskId; result: unknown; duration: number }
+  | { kind: "failed"; taskId: TaskId; error: string };
+
+// --- Type guard ---
+function isCompletedEvent(e: TaskEvent): e is Extract<TaskEvent, { kind: "completed" }> {
+  return e.kind === "completed";
+}
+
+function isWorkerBusy(state: WorkerState): state is WorkerState.Busy {
+  return state === WorkerState.Busy;
+}
+
+// --- Tuple type ---
+type WorkerSnapshot = readonly [WorkerId, WorkerState, number];
+
+// --- Utility types ---
+type PoolOptions = Partial<Omit<WorkerConfig, "id">>;
+type RequiredPoolOptions = Required<Pick<WorkerConfig, "minWorkers" | "maxWorkers">>;
+type EventHandlers = Record<EventName, (event: TaskEvent) => void>;
+
+// --- Intersection type ---
+type WorkerInfo = Identifiable & HasMetrics & { state: WorkerState };
+
+// --- Generics with constraints ---
+interface Queue<T extends Identifiable> {
+  enqueue(item: T): void;
+  dequeue(): T | undefined;
+  peek(): T | undefined;
+  readonly length: number;
+}
+
+// --- Generic class ---
+class PriorityQueue<T extends Identifiable & { priority: number }> implements Queue<T> {
+  private items: T[] = [];
+
+  get length(): number {
+    return this.items.length;
+  }
+
+  enqueue(item: T): void {
+    this.items.push(item);
+    this.items.sort((a, b) => b.priority - a.priority);
+  }
+
+  dequeue(): T | undefined {
+    return this.items.shift();
+  }
+
+  peek(): T | undefined {
+    return this.items[0];
+  }
+
+  drain(): T[] {
+    const all = [...this.items];
+    this.items = [];
+    return all;
+  }
+}
+
+// --- Abstract class ---
+abstract class BaseWorker implements Identifiable, HasMetrics {
+  abstract readonly id: WorkerId;
+  abstract get state(): WorkerState;
+  abstract run(task: TaskPayload): Promise<TaskResult>;
+
+  #completed = 0;
+  #failed = 0;
+
+  get completedTasks(): number {
+    return this.#completed;
+  }
+  get failedTasks(): number {
+    return this.#failed;
+  }
+
+  protected recordSuccess(): void {
+    this.#completed++;
+  }
+  protected recordFailure(): void {
+    this.#failed++;
+  }
+}
+
+// --- Readonly and as const ---
+const DEFAULTS = {
+  minWorkers: 2,
+  maxWorkers: 8,
+  idleTimeoutMs: 30_000,
+  retryLimit: 3,
+} as const;
+
+type DefaultKeys = keyof typeof DEFAULTS;
+
+// --- Interfaces for tasks ---
+interface TaskPayload extends Identifiable {
+  readonly id: TaskId;
+  readonly priority: number;
+  readonly fn: (workerId: WorkerId) => Promise<string>;
+}
+
+interface TaskResult {
+  taskId: TaskId;
+  workerId: WorkerId;
+  result: string;
+  duration: number;
+}
+
+// --- Function overloads ---
+function createWorkerId(index: number): WorkerId;
+function createWorkerId(prefix: string, index: number): WorkerId;
+function createWorkerId(prefixOrIndex: string | number, index?: number): WorkerId {
+  if (typeof prefixOrIndex === "number") {
+    return `w-${prefixOrIndex}`;
+  }
+  return `w-${index!}` as WorkerId;
+}
+
+// --- Concrete worker class ---
+class PoolWorker extends BaseWorker {
+  readonly id: WorkerId;
+  #state: WorkerState = WorkerState.Idle;
+  #currentTask: TaskId | null = null;
+
+  constructor(index: number) {
+    super();
+    this.id = createWorkerId(index);
+  }
+
+  get state(): WorkerState {
+    return this.#state;
+  }
+
+  set state(s: WorkerState) {
+    this.#state = s;
+  }
+
+  get busy(): boolean {
+    return isWorkerBusy(this.#state);
+  }
+
+  async run(task: TaskPayload): Promise<TaskResult> {
+    this.#state = WorkerState.Busy;
+    this.#currentTask = task.id;
+    const start = Date.now();
+
+    try {
+      const result = await task.fn(this.id);
+      this.recordSuccess();
+      return { taskId: task.id, workerId: this.id, result, duration: Date.now() - start };
+    } catch (err) {
+      this.recordFailure();
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Worker ${this.id} failed on ${task.id}: ${msg}`);
+    } finally {
+      this.#state = WorkerState.Idle;
+      this.#currentTask = null;
+    }
+  }
+
+  snapshot(): WorkerSnapshot {
+    return [this.id, this.#state, this.completedTasks] as const;
+  }
+}
+
+// --- Main pool class ---
+class WorkerPool {
+  readonly #workers: PoolWorker[] = [];
+  readonly #queue: PriorityQueue<TaskPayload>;
+  #state: WorkerState = WorkerState.Idle;
+  #events: TaskEvent[] = [];
+  readonly #handlers: Partial<EventHandlers>;
+  readonly #config: Readonly<WorkerConfig>;
+
+  constructor(opts: PoolOptions = {}) {
+    const merged: Mutable<WorkerConfig> = {
+      id: "pool-main",
+      minWorkers: opts.minWorkers ?? DEFAULTS.minWorkers,
+      maxWorkers: opts.maxWorkers ?? DEFAULTS.maxWorkers,
+      idleTimeoutMs: opts.idleTimeoutMs ?? DEFAULTS.idleTimeoutMs,
+      retryLimit: opts.retryLimit ?? DEFAULTS.retryLimit,
+    };
+    this.#config = Object.freeze(merged);
+    this.#queue = new PriorityQueue<TaskPayload>();
+    this.#handlers = {};
+
+    for (let i = 0; i < this.#config.minWorkers; i++) {
+      this.#workers.push(new PoolWorker(i));
+    }
+  }
+
+  get size(): number {
+    return this.#workers.length;
+  }
+
+  get pending(): number {
+    return this.#queue.length;
+  }
+
+  on(event: EventName, handler: (e: TaskEvent) => void): void {
+    this.#handlers[event] = handler;
+  }
+
+  #emit(event: TaskEvent): void {
+    this.#events.push(event);
+    const name: EventName = `on${(event.kind.charAt(0).toUpperCase() + event.kind.slice(1)) as Capitalize<typeof event.kind>}` as EventName;
+    this.#handlers[name]?.(event);
+  }
+
+  #findIdle(): PoolWorker | undefined {
+    return this.#workers.find((w) => !w.busy);
+  }
+
+  submit(task: TaskPayload): void {
+    this.#queue.enqueue(task);
+    this.#emit({ kind: "submitted", taskId: task.id, timestamp: Date.now() });
+  }
+
+  async dispatchAll(): Promise<readonly TaskResult[]> {
+    this.#state = WorkerState.Busy;
+    const results: TaskResult[] = [];
+
+    while (this.#queue.length > 0) {
+      const idle = this.#workers.filter((w) => !w.busy);
+      const batch = idle.map(() => this.#queue.dequeue()).filter((t): t is TaskPayload => t != null);
+
+      const promises = batch.map(async (task, i) => {
+        const worker = idle[i]!;
+        this.#emit({ kind: "started", taskId: task.id, workerId: worker.id, timestamp: Date.now() });
+        try {
+          const r = await worker.run(task);
+          this.#emit({ kind: "completed", taskId: r.taskId, result: r.result, duration: r.duration });
+          return r;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.#emit({ kind: "failed", taskId: task.id, error: msg });
+          return null;
+        }
+      });
+
+      const settled = await Promise.all(promises);
+      results.push(...settled.filter((r): r is TaskResult => r !== null));
+    }
+
+    this.#state = WorkerState.Idle;
+    return results;
+  }
+
+  stats(): { workers: readonly WorkerSnapshot[]; totalCompleted: number; pending: number } {
+    const workers = this.#workers.map((w) => w.snapshot());
+    const totalCompleted = workers.reduce((sum, [, , count]) => sum + count, 0);
+    return { workers, totalCompleted, pending: this.pending };
+  }
+
+  eventLog(): readonly TaskEvent[] {
+    return [...this.#events];
+  }
+
+  async shutdown(): Promise<string> {
+    this.#state = WorkerState.Draining;
+    if (this.#queue.length > 0) {
+      await this.dispatchAll();
+    }
+    this.#state = WorkerState.Shutdown;
+    return `Pool shut down. ${this.#events.filter(isCompletedEvent).length} tasks completed.`;
+  }
+}
+
+// --- Demo runner ---
+async function runDemo(): Promise<{
+  results: readonly TaskResult[];
+  stats: ReturnType<WorkerPool["stats"]>;
+  completedEvents: Extract<TaskEvent, { kind: "completed" }>[];
+}> {
+  const pool = new WorkerPool({ minWorkers: 3, maxWorkers: 6 });
+
+  const tasks: ReadonlyArray<TaskPayload> = Array.from({ length: 10 }, (_, i) => ({
+    id: `t-${i}` as TaskId,
+    priority: i % 3 === 0 ? Priority.High : i % 2 === 0 ? Priority.Medium : Priority.Low,
+    fn: async (wid: WorkerId) => {
+      const delay = Math.floor(Math.random() * 100);
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
+      return `${wid} completed t-${i} in ${delay}ms`;
+    },
+  }));
+
+  for (const task of tasks) {
+    pool.submit(task);
+  }
+
+  const results = await pool.dispatchAll();
+  const stats = pool.stats();
+  const completedEvents = pool.eventLog().filter(isCompletedEvent);
+  const msg = await pool.shutdown();
+
+  return { results, stats, completedEvents };
+}
+
+export {
+  WorkerPool,
+  PoolWorker,
+  PriorityQueue,
+  WorkerState,
+  Priority,
+  runDemo,
+  type TaskPayload,
+  type TaskResult,
+  type TaskEvent,
+  type WorkerId,
+  type TaskId,
+  type PoolOptions,
+};

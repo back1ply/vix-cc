@@ -16,10 +16,12 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: mcp-server/package-lock.json
-      - run: npm ci
+      # grammars ship prebuilt .wasm; skip their native build scripts
+      - run: npm ci --ignore-scripts
       # tsc directly: the build script's postbuild kills local server processes
       - run: npx tsc
       # the plugin runs the committed dist/, so it must match src/
       - name: dist is up to date
         run: git diff --exit-code -- dist
+      - run: npm test
       - run: npm run probe

@@ -13,14 +13,14 @@ description: |
   </example>
 
   <example>
-  Context: vix-workflow spawns vix-implement after vix-plan
-  user: "[vix-workflow spawning vix-implement with the plan]"
-  assistant: "I'll implement the plan."
+  Context: vix-reviewer returned NEEDS_FIX on a previous implementation
+  user: "[re-invoked with the plan and the reviewer's missing items]"
+  assistant: "I'll address the reviewer's gaps against the plan."
   <commentary>
-  vix-workflow's third phase.
+  Implement → review loop: vix-implement fixes, vix-reviewer re-checks.
   </commentary>
   </example>
-model: opus
+model: inherit
 color: green
 ---
 

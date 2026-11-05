@@ -1,0 +1,360 @@
+//! Thread-pool implementation for distributing tasks across worker threads.
+
+use std::collections::HashMap;
+use std::fmt;
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
+use std::thread;
+
+const MAX_WORKERS: usize = 8;
+const DEFAULT_TIMEOUT_MS: u64 = 5000;
+static POOL_NAME: &str = "main-pool";
+
+type TaskId = u32;
+type TaskResult<T> = Result<T, PoolError>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct WorkerId(usize);
+
+#[derive(Debug, Clone)]
+struct TaskPayload(String, Vec<u8>);
+
+#[derive(Debug, Clone)]
+enum Job {
+    Compute { id: TaskId, payload: TaskPayload, priority: Priority },
+    Shutdown,
+    Retry(TaskId, u8),
+    Noop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Priority { Low = 0, Medium = 1, High = 2, Critical = 3 }
+
+impl fmt::Display for Priority {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Priority::Low => write!(f, "low"),
+            Priority::Medium => write!(f, "medium"),
+            Priority::High => write!(f, "high"),
+            Priority::Critical => write!(f, "critical"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum PoolError {
+    Timeout(String),
+    WorkerPanicked { worker: WorkerId, message: String },
+    TaskFailed(TaskId),
+    Empty,
+}
+
+impl fmt::Display for PoolError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PoolError::Timeout(msg) => write!(f, "timeout: {}", msg),
+            PoolError::WorkerPanicked { worker, message } => write!(f, "worker {:?} panicked: {}", worker, message),
+            PoolError::TaskFailed(id) => write!(f, "task {} failed", id),
+            PoolError::Empty => write!(f, "empty"),
+        }
+    }
+}
+trait Executable {
+    fn name(&self) -> &str;
+    fn execute(&self) -> TaskResult<String>;
+    fn description(&self) -> String { format!("task '{}'", self.name()) }
+    fn retry_limit(&self) -> u8 { 3 }
+}
+/** Runtime diagnostics for any component that can report
+    its health status and internal statistics. */
+trait Diagnostics: fmt::Debug {
+    fn health_check(&self) -> bool;
+    fn stats(&self) -> HashMap<String, usize>;
+}
+
+/// A unit of work with an identifier, label, priority, and optional payload.
+#[derive(Debug, Clone)]
+struct Task {
+    id: TaskId,
+    label: String,
+    priority: Priority,
+    payload: Box<TaskPayload>,
+    retries: u8,
+}
+
+impl Task {
+    fn new(id: TaskId, label: &str, priority: Priority) -> Self {
+        Task {
+            id,
+            label: label.to_string(),
+            priority,
+            payload: Box::new(TaskPayload(String::from("default"), vec![0u8; 4])),
+            retries: 0,
+        }
+    }
+
+    fn with_payload(mut self, data: &str) -> Self {
+        self.payload = Box::new(TaskPayload(data.to_string(), data.as_bytes().to_vec()));
+        self
+    }
+
+    fn increment_retries(&mut self) -> u8 {
+        self.retries += 1;
+        self.retries
+    }
+}
+
+impl Executable for Task {
+    fn name(&self) -> &str { &self.label }
+
+    fn execute(&self) -> TaskResult<String> {
+        if self.label.contains("fail") {
+            return Err(PoolError::TaskFailed(self.id));
+        }
+        Ok(format!("task-{} completed [priority={}]", self.id, self.priority))
+    }
+}
+
+struct TaskRef<'a> {
+    task: &'a Task,
+    pool_name: &'a str,
+}
+
+impl<'a> TaskRef<'a> {
+    fn summary(&self) -> String {
+        format!("[{}] {} ({})", self.pool_name, self.task.label, self.task.priority)
+    }
+}
+
+fn longest_label<'a>(a: &'a str, b: &'a str) -> &'a str {
+    if a.len() >= b.len() { a } else { b }
+}
+
+fn run_all<T>(tasks: &[T]) -> Vec<TaskResult<String>>
+where
+    T: Executable + fmt::Debug,
+{
+    tasks.iter().map(|t| { println!("running: {}", t.description()); t.execute() }).collect()
+}
+
+fn find_by_name<'a, T: Executable>(tasks: &'a [T], name: &str) -> Option<&'a T> {
+    tasks.iter().find(|t| t.name() == name)
+}
+
+#[derive(Debug)]
+struct WorkerPool {
+    name: String,
+    concurrency: usize,
+    job_tx: Option<mpsc::Sender<Job>>,
+    job_rx: Arc<Mutex<mpsc::Receiver<Job>>>,
+    result_tx: mpsc::Sender<(WorkerId, TaskResult<String>)>,
+    result_rx: Option<mpsc::Receiver<(WorkerId, TaskResult<String>)>>,
+    handles: Vec<thread::JoinHandle<()>>,
+    submitted: usize,
+}
+
+impl WorkerPool {
+    fn new(name: &str, concurrency: usize) -> Self {
+        let c = if concurrency > MAX_WORKERS { MAX_WORKERS } else { concurrency };
+        let (jtx, jrx) = mpsc::channel();
+        let (rtx, rrx) = mpsc::channel();
+        WorkerPool {
+            name: name.to_string(), concurrency: c,
+            job_tx: Some(jtx), job_rx: Arc::new(Mutex::new(jrx)),
+            result_tx: rtx, result_rx: Some(rrx), handles: Vec::new(), submitted: 0,
+        }
+    }
+
+    fn start(&mut self) {
+        for i in 0..self.concurrency {
+            let rx = Arc::clone(&self.job_rx);
+            let tx = self.result_tx.clone();
+            let wid = WorkerId(i);
+            self.handles.push(thread::spawn(move || loop {
+                let job = { let guard = rx.lock().unwrap(); guard.recv() };
+                match job {
+                    Ok(Job::Compute { id, payload, priority }) => {
+                        let msg = format!("worker-{}: task {} ({}) [{}]", wid.0, id, payload.0, priority);
+                        tx.send((wid, Ok(msg))).ok();
+                    }
+                    Ok(Job::Retry(id, attempt)) if attempt < 3 => {
+                        tx.send((wid, Ok(format!("worker-{}: retry {} task {}", wid.0, attempt, id)))).ok();
+                    }
+                    Ok(Job::Retry(id, _)) => { tx.send((wid, Err(PoolError::TaskFailed(id)))).ok(); }
+                    Ok(Job::Shutdown) | Err(_) => break,
+                    Ok(Job::Noop) => {}
+                }
+            }));
+        }
+    }
+
+    fn submit(&mut self, job: Job) -> TaskResult<()> {
+        match &self.job_tx {
+            Some(tx) => { tx.send(job).map_err(|_| PoolError::Empty)?; self.submitted += 1; Ok(()) }
+            None => Err(PoolError::Empty),
+        }
+    }
+
+    fn close(mut self) -> Vec<(WorkerId, TaskResult<String>)> {
+        drop(self.job_tx.take());
+        for handle in self.handles.drain(..) { handle.join().ok(); }
+        drop(self.result_tx);
+        let rx = self.result_rx.take().unwrap();
+        let mut results = Vec::new();
+        while let Ok(item) = rx.recv() { results.push(item); }
+        results
+    }
+}
+
+impl Diagnostics for WorkerPool {
+    fn health_check(&self) -> bool { self.job_tx.is_some() && self.concurrency > 0 }
+    fn stats(&self) -> HashMap<String, usize> {
+        let mut m = HashMap::new();
+        m.insert("concurrency".into(), self.concurrency);
+        m.insert("submitted".into(), self.submitted);
+        m
+    }
+}
+
+struct Scheduler<'a> {
+    pool: &'a mut WorkerPool,
+    queue: Vec<Task>,
+}
+
+impl<'a> Scheduler<'a> {
+    fn new(pool: &'a mut WorkerPool) -> Self { Scheduler { pool, queue: Vec::new() } }
+    fn enqueue(&mut self, task: Task) { self.queue.push(task); }
+
+    fn flush(&mut self) -> TaskResult<usize> {
+        self.queue.sort_by(|a, b| b.priority.cmp(&a.priority));
+        let tasks: Vec<Task> = self.queue.drain(..).collect();
+        let count = tasks.len();
+        for task in tasks {
+            self.pool.submit(Job::Compute {
+                id: task.id, payload: *task.payload, priority: task.priority,
+            })?;
+        }
+        Ok(count)
+    }
+}
+
+fn build_report(results: &[(WorkerId, TaskResult<String>)]) -> HashMap<WorkerId, Vec<String>> {
+    let mut report: HashMap<WorkerId, Vec<String>> = HashMap::new();
+    for (wid, result) in results.iter() {
+        let entry = report.entry(*wid).or_insert_with(Vec::new);
+        match result {
+            Ok(msg) => entry.push(msg.clone()),
+            Err(e) => entry.push(format!("ERROR: {}", e)),
+        }
+    }
+    report
+}
+
+fn summarize(results: &[(WorkerId, TaskResult<String>)]) -> String {
+    let ok = results.iter().filter(|(_, r)| r.is_ok()).count();
+    let msgs: Vec<&str> = results.iter()
+        .filter_map(|(_, r)| r.as_ref().ok().map(|s| s.as_str())).collect();
+    let err_msg = results.iter().filter_map(|(_, r)| r.as_ref().err()).next()
+        .map(|e| format!("first error: {}", e)).unwrap_or_else(|| "no errors".to_string());
+    let total_len = msgs.iter().fold(0usize, |acc, m| acc + m.len());
+    let _paired: Vec<_> = (0..msgs.len()).zip(msgs.iter()).collect();
+    let _enumerated: Vec<_> = msgs.iter().enumerate().collect();
+    format!("ok={}, fail={}, chars={}, {}", ok, results.len() - ok, total_len, err_msg)
+}
+
+fn lookup_worker_result(
+    report: &HashMap<WorkerId, Vec<String>>, worker_id: usize, index: usize,
+) -> Option<String> {
+    report.get(&WorkerId(worker_id)).and_then(|msgs| msgs.get(index)).map(|s| s.to_uppercase())
+}
+
+fn parse_task_id(input: &str) -> TaskResult<TaskId> {
+    input.trim().parse::<TaskId>().map_err(|_| PoolError::Timeout(format!("invalid id: {}", input)))
+}
+
+fn demonstrate_closures(tasks: &mut Vec<Task>) {
+    let pool_name = String::from(POOL_NAME);
+    let display = |t: &Task| -> String { format!("{}: task-{}", pool_name, t.id) };
+    for t in tasks.iter() { let _ = display(t); }
+    let mut counter = 0usize;
+    { let mut count = |_: &Task| { counter += 1; }; for t in tasks.iter() { count(t); } }
+    println!("counted {} tasks", counter);
+    let labels: Vec<String> = tasks.iter().map(|t| t.label.clone()).collect();
+    let moved = move || -> usize { labels.len() };
+    println!("moved closure: {} labels", moved());
+    tasks.retain(|t| t.priority >= Priority::Medium);
+}
+
+/*
+Scan the slice linearly and return the id of the first
+task whose priority is Critical, if any.
+*/
+fn find_first_critical(tasks: &[Task]) -> Option<TaskId> {
+    let mut idx = 0;
+    loop {
+        if idx >= tasks.len() { break None; }
+        if tasks[idx].priority == Priority::Critical { break Some(tasks[idx].id); }
+        idx += 1;
+    }
+}
+
+fn classify_result(result: &TaskResult<String>) -> &'static str {
+    match result {
+        Ok(msg) if msg.contains("retry") => "retried-success",
+        Ok(msg) if msg.len() > 50 => "verbose-success",
+        Ok(_) => "success",
+        Err(PoolError::Timeout(_)) => "timeout",
+        Err(PoolError::WorkerPanicked { worker: w, .. }) if w.0 == 0 => "primary-worker-panic",
+        Err(PoolError::TaskFailed(id @ 0..=10)) => { let _ = id; "low-id-failure" }
+        Err(_) => "other-error",
+    }
+}
+
+fn main() {
+    // Bootstrap the pool and run all enqueued tasks
+    println!("=== {} (max={}, timeout={}ms) ===", POOL_NAME, MAX_WORKERS, DEFAULT_TIMEOUT_MS);
+
+    let mut pool = WorkerPool::new(POOL_NAME, 4);
+    assert!(pool.health_check());
+    println!("pool stats: {:?}", pool.stats());
+    pool.start();
+
+    let task_names: Vec<&str> = vec![
+        "migrate-db", "send-email", "resize-image", "generate-report",
+        "sync-files", "clear-cache", "backup-data", "index-search",
+    ];
+    let priorities = [Priority::Low, Priority::Medium, Priority::High, Priority::Critical];
+
+    let mut tasks: Vec<Task> = task_names.iter().enumerate()
+        .map(|(i, &name)| Task::new(i as TaskId, name, priorities[i % priorities.len()])
+            .with_payload(&format!("data-for-{}", name)))
+        .collect();
+
+    let exec_results = run_all(&tasks);
+    for r in &exec_results { println!("  classify: {}", classify_result(r)); }
+
+    if let Some(found) = find_by_name(&tasks, "sync-files") {
+        println!("found task: {}", found.description());
+    }
+
+    let tref = TaskRef { task: &tasks[0], pool_name: POOL_NAME };
+    println!("{}", tref.summary());
+    println!("longer label: {}", longest_label(&tasks[0].label, &tasks[1].label));
+
+    let mut rt = tasks[0].clone();
+    while rt.retries < rt.retry_limit() { println!("retry {}", rt.increment_retries()); }
+
+    demonstrate_closures(&mut tasks);
+    {
+        let mut sched = Scheduler::new(&mut pool);
+        for t in tasks { sched.enqueue(t); }
+        match sched.flush() { Ok(n) => println!("flushed {}", n), Err(e) => println!("err: {}", e) }
+    }
+    let results = pool.close();
+    let report = build_report(&results);
+    println!("{}", summarize(&results));
+    println!("w0: {}", lookup_worker_result(&report, 0, 0).unwrap_or("none".into()));
+    match parse_task_id("42") { Ok(id) => println!("id={}", id), Err(e) => println!("{}", e) }
+    println!("critical: {:?}", find_first_critical(&[]));
+    for (wid, msgs) in &report { println!("{:?}: {} results", wid, msgs.len()); }
+}
