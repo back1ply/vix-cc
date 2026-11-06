@@ -21,6 +21,7 @@ description: |
   </commentary>
   </example>
 model: inherit
+maxTurns: 40
 color: yellow
 tools: ["Read", "Glob", "Grep", "Bash", "LSP", "mcp__plugin_vix_vix__vix_read_minified"]
 ---

@@ -22,21 +22,23 @@ Synced with upstream vix at [`e68a25c`](https://github.com/get-vix/vix/commit/e6
 /plugin install vix@vix-cc
 ```
 
-The compiled MCP server (`mcp-server/dist/`) ships in the repo — no build step needed after install. Node.js must be on PATH for the server to run.
+The MCP server ships ready to run: `mcp-server/dist/server.mjs` is one bundled file with all its npm dependencies, and the Tree-sitter grammars are in `mcp-server/grammars/`. No `npm install` or build step is needed after install. Node.js must be on PATH.
 
 ### Manual (local dev / after modifying MCP server source)
 
 ```bash
 cd mcp-server
 npm install --ignore-scripts --legacy-peer-deps
-npm run build
+npm run build   # tsc, then bundles dist/server.mjs and copies grammars/
+npm test
 ```
 
-Then add the plugin directory in Claude Code settings.
+Then add the plugin directory in Claude Code settings, and run `/reload-plugins` after each build.
 
 **Runtime requirements:**
 - Node.js 20+ on PATH (`node`)
 - Python 3.x on PATH (for `vix_tool_chain`)
+- `rg` (ripgrep) on PATH, for `grep` inside `vix_tool_chain`
 
 ## Agents
 
@@ -165,7 +167,9 @@ vix-cc/
 └── mcp-server/
     ├── package.json
     ├── tsconfig.json
-    ├── test/                   — upstream golden fixtures + edit tests (npm test)
+    ├── grammars/               — Tree-sitter .wasm files + licenses (copied by scripts/bundle.mjs)
+    ├── scripts/bundle.mjs      — bundles dist/server.mjs, copies grammars/
+    ├── test/                   — upstream golden fixtures, edit and tool-chain tests (npm test)
     └── src/
         ├── index.ts                — MCP server entry, session state, tool dispatch
         ├── minifier.ts             — Tree-sitter token minifier + position map (port of upstream treesitter.go)

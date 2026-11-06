@@ -15,11 +15,11 @@ cd mcp-server && npm install --ignore-scripts --legacy-peer-deps
 cd mcp-server && npm test
 ```
 
-`npm run build` compiles TypeScript with `tsc` then runs `sync-local.mjs` (gitignored, local-dev only) which kills the running MCP server PID. After building, run `/reload-plugins` in Claude Code to restart the MCP server with the new dist/.
+`npm run build` compiles TypeScript with `tsc`, runs `scripts/bundle.mjs` (bundles `src/index.ts` and its npm dependencies into `dist/server.mjs`, copies the grammar `.wasm` files and their licenses into `grammars/`), then runs `sync-local.mjs` (gitignored, local-dev only) which kills the running MCP server PID. After building, run `/reload-plugins` in Claude Code to restart the MCP server with the new dist/.
 
-The compiled `mcp-server/dist/` is committed to the repo so end users don't need to build after installing the plugin.
+`dist/` and `grammars/` are committed. The plugin runs `dist/server.mjs`, which needs no `node_modules`: Claude Code only auto-installs npm packages when `package.json` is at the plugin root, and ours is in `mcp-server/`. CI checks both folders are up to date and smoke-tests the bundle with `node_modules` deleted. Do not add a root `package.json`.
 
-`npm test` runs `test/golden.test.mjs` (upstream vix's minifier golden files: byte-identical output and idempotency, both comment modes) and `test/edit.test.mjs` (upstream's edit-projection cases plus vix-cc checks). Any minifier change must keep all golden tests passing. There is no lint script.
+`npm test` runs `test/golden.test.mjs` (upstream vix's minifier golden files: byte-identical output and idempotency, both comment modes) `test/edit.test.mjs` (upstream's edit-projection cases plus vix-cc checks) and `test/toolchain.test.mjs` (needs `python` and `rg`). Any minifier change must keep all golden tests passing. There is no lint script.
 
 ## Architecture
 
@@ -45,7 +45,7 @@ This is a Claude Code plugin with three component types that Claude Code auto-di
 
 ### Minifier (`minifier.ts`)
 
-Uses **web-tree-sitter (WASM)** instead of native `tree-sitter` bindings — native bindings fail to compile on Windows with Node 24 (MSBuild/node-gyp). Grammar `.wasm` files ship inside each `tree-sitter-*` npm package. `ensureInit()` must be awaited before the server accepts requests (done in `index.ts`).
+Uses **web-tree-sitter (WASM)** instead of native `tree-sitter` bindings — native bindings fail to compile on Windows with Node 24 (MSBuild/node-gyp). Grammars load from `mcp-server/grammars/` (dev and bundled runs alike); `Parser.init` gets a `locateFile` pointing there for web-tree-sitter's own runtime wasm. `ensureInit()` must be awaited before the server accepts requests (done in `index.ts`).
 
 It is a port of upstream `internal/daemon/treesitter.go`: leaf tokens joined with minimal separators, per-language passes (Go/Kotlin/Ruby semicolon insertion, Python one-space indentation, Bash whitespace, HTML attribute spacing), and re-validation that the output still parses (otherwise `null` → callers fall back to raw text / literal edit). `minifyMapped` also returns a position map (`-1` for inserted separators); `projectSpan` maps a minified match back to source offsets for the edit splice. Offsets are JS string indices, which is what web-tree-sitter reports. Deliberate differences from upstream are listed at the top of `minifier.ts`.
 

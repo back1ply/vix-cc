@@ -22,26 +22,29 @@ import { fileURLToPath } from 'url';
 import { dirname, join, extname } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const NODE_MODULES = join(__dirname, '..', 'node_modules');
+// Grammar .wasm files are copied into mcp-server/grammars/ by
+// scripts/bundle.mjs and committed, so the plugin runs without npm install.
+// Both dist/minifier.js (tsc) and dist/server.mjs (bundle) sit in dist/.
+const GRAMMARS = join(__dirname, '..', 'grammars');
 
 const WASM_PATHS: Record<string, string> = {
-  javascript: join(NODE_MODULES, 'tree-sitter-javascript', 'tree-sitter-javascript.wasm'),
-  typescript: join(NODE_MODULES, 'tree-sitter-typescript', 'tree-sitter-typescript.wasm'),
-  tsx: join(NODE_MODULES, 'tree-sitter-typescript', 'tree-sitter-tsx.wasm'),
-  python: join(NODE_MODULES, 'tree-sitter-python', 'tree-sitter-python.wasm'),
-  go: join(NODE_MODULES, 'tree-sitter-go', 'tree-sitter-go.wasm'),
-  rust: join(NODE_MODULES, 'tree-sitter-rust', 'tree-sitter-rust.wasm'),
-  c: join(NODE_MODULES, 'tree-sitter-c', 'tree-sitter-c.wasm'),
-  cpp: join(NODE_MODULES, 'tree-sitter-cpp', 'tree-sitter-cpp.wasm'),
-  java: join(NODE_MODULES, 'tree-sitter-java', 'tree-sitter-java.wasm'),
-  csharp: join(NODE_MODULES, 'tree-sitter-c-sharp', 'tree-sitter-c_sharp.wasm'),
-  kotlin: join(NODE_MODULES, '@tree-sitter-grammars', 'tree-sitter-kotlin', 'tree-sitter-kotlin.wasm'),
-  php: join(NODE_MODULES, 'tree-sitter-php', 'tree-sitter-php.wasm'),
-  ruby: join(NODE_MODULES, 'tree-sitter-ruby', 'tree-sitter-ruby.wasm'),
-  json: join(NODE_MODULES, 'tree-sitter-json', 'tree-sitter-json.wasm'),
-  css: join(NODE_MODULES, 'tree-sitter-css', 'tree-sitter-css.wasm'),
-  html: join(NODE_MODULES, 'tree-sitter-html', 'tree-sitter-html.wasm'),
-  bash: join(NODE_MODULES, 'tree-sitter-bash', 'tree-sitter-bash.wasm'),
+  javascript: join(GRAMMARS, 'tree-sitter-javascript.wasm'),
+  typescript: join(GRAMMARS, 'tree-sitter-typescript.wasm'),
+  tsx: join(GRAMMARS, 'tree-sitter-tsx.wasm'),
+  python: join(GRAMMARS, 'tree-sitter-python.wasm'),
+  go: join(GRAMMARS, 'tree-sitter-go.wasm'),
+  rust: join(GRAMMARS, 'tree-sitter-rust.wasm'),
+  c: join(GRAMMARS, 'tree-sitter-c.wasm'),
+  cpp: join(GRAMMARS, 'tree-sitter-cpp.wasm'),
+  java: join(GRAMMARS, 'tree-sitter-java.wasm'),
+  csharp: join(GRAMMARS, 'tree-sitter-c_sharp.wasm'),
+  kotlin: join(GRAMMARS, 'tree-sitter-kotlin.wasm'),
+  php: join(GRAMMARS, 'tree-sitter-php.wasm'),
+  ruby: join(GRAMMARS, 'tree-sitter-ruby.wasm'),
+  json: join(GRAMMARS, 'tree-sitter-json.wasm'),
+  css: join(GRAMMARS, 'tree-sitter-css.wasm'),
+  html: join(GRAMMARS, 'tree-sitter-html.wasm'),
+  bash: join(GRAMMARS, 'tree-sitter-bash.wasm'),
 };
 
 const EXT_TO_LANG: Record<string, string> = {
@@ -94,7 +97,9 @@ const parserCache = new Map<string, Parser>();
 
 export async function ensureInit(): Promise<void> {
   if (!initialized) {
-    await Parser.init();
+    // web-tree-sitter's runtime wasm lives in grammars/ too (after bundling it
+    // would otherwise be looked up next to dist/server.mjs).
+    await Parser.init({ locateFile: () => join(GRAMMARS, 'web-tree-sitter.wasm') });
     initialized = true;
   }
 }

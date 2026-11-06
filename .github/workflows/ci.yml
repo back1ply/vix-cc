@@ -18,10 +18,17 @@ jobs:
           cache-dependency-path: mcp-server/package-lock.json
       # grammars ship prebuilt .wasm; skip their native build scripts
       - run: npm ci --ignore-scripts
-      # tsc directly: the build script's postbuild kills local server processes
-      - run: npx tsc
-      # the plugin runs the committed dist/, so it must match src/
-      - name: dist is up to date
-        run: git diff --exit-code -- dist
+      # tsc + bundle (postbuild's local-only helper is absent on CI and skipped)
+      - run: npm run build
+      # the plugin runs the committed dist/ and grammars/, so they must match src/
+      - name: dist and grammars are up to date
+        run: git diff --exit-code -- dist grammars && test -z "$(git status --porcelain -- dist grammars)"
       - run: npm test
       - run: npm run probe
+      # the plugin ships without node_modules: the bundle must run on its own
+      - name: smoke test without node_modules
+        run: |
+          rm -rf node_modules
+          npm run smoke | tee smoke.json
+          grep -q 'pool.shutdown()' smoke.json
+          ! grep -q '"isError": true' smoke.json

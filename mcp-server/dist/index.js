@@ -116,10 +116,14 @@ const TOOLS = [
 ];
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 /** Returns an error message naming the bad field, or null. Covers `required` + primitive types — all these schemas use. */
+// Fields the schema marks required only so the model explains itself. Like
+// upstream (tool_validation.go advisoryFields), a call that omits them is not
+// rejected.
+const ADVISORY_FIELDS = new Set(['reason']);
 function checkArgs(tool, args) {
     const properties = (tool.inputSchema.properties ?? {});
     const required = tool.inputSchema.required ?? [];
-    const missing = required.filter((k) => args[k] === undefined || args[k] === null);
+    const missing = required.filter((k) => !ADVISORY_FIELDS.has(k) && (args[k] === undefined || args[k] === null));
     if (missing.length)
         return `${tool.name}: missing required argument(s): ${missing.join(', ')}. Required: ${required.join(', ')}.`;
     for (const [k, v] of Object.entries(args)) {

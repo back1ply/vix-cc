@@ -8,6 +8,8 @@ Earlier changes are in the [git history](https://github.com/back1ply/vix-cc/comm
 Synced with upstream vix `e68a25c` (2026-09-23).
 
 ### Added
+- Agents carry upstream's turn limits (`maxTurns`: explore 25, reviewer and code-explorer 40, others 100).
+- `test/toolchain.test.mjs`; CI smoke-tests the bundled server with `node_modules` deleted.
 - `vix-code-explorer` agent (upstream `code-explorer`).
 - `vix-goal` skill (upstream Goal workflow): pursue → independent audit → loop, max 30 iterations.
 - `vix-review-pr` skill (upstream `review-pr`).
@@ -21,6 +23,9 @@ Synced with upstream vix `e68a25c` (2026-09-23).
 - CI: build, check that committed `dist/` matches `src/`, probe.
 
 ### Changed
+- The plugin runs a single bundled `dist/server.mjs`, with grammar `.wasm` files committed in `mcp-server/grammars/`, so it works after a marketplace install without `npm install` (previously the server could not start: its npm packages were never installed).
+- `vix_tool_chain`: each tool call uses upstream's 120 s timeout (was 30 s bash / 10 s grep), runs asynchronously, and reports timeouts as errors.
+- A missing `reason` argument no longer rejects the call (upstream treats it as advisory).
 - License changed from MIT to AGPL-3.0, matching upstream vix (which vix-cc ports prompts and code from).
 - `vix_read_minified` uses a port of upstream's token minifier (comments and formatting whitespace removed, upstream reports 20–50% fewer tokens) instead of only stripping comments. Output matches upstream's golden files byte-for-byte. Minified reads are returned without line numbers, as upstream does.
 - `/vix-workflow` follows upstream's Plan workflow: Explore and Plan run in the main conversation (stem agent, shared cache), then Accept / Modify / Reject, then a fresh `vix-general` executes. The implement → review loop is no longer part of it (the agents remain).
@@ -33,6 +38,7 @@ Synced with upstream vix `e68a25c` (2026-09-23).
 - `vix-solver` agent (deleted upstream).
 
 ### Fixed
+- `vix_tool_chain` `grep` always returned an empty list (a regex escape was lost in the embedded Python), and its `include` filter was passed to ripgrep as an unknown flag.
 - Minifier: `return $x` and `return élan` (JS/TS) no longer merge into one identifier (upstream bug).
 - `vix_edit_minified`: multi-line Python edits are re-indented to the file's indent unit, and CRLF files get CRLF line breaks (upstream splices `new_string` verbatim, which breaks Python blocks).
 - Formatters that are `.cmd` shims on Windows (e.g. prettier) now run.

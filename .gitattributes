@@ -1,1 +1,2 @@
 mcp-server/test/fixtures/** -text
+*.wasm binary

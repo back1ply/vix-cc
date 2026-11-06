@@ -11,6 +11,9 @@ export interface ToolChainArgs {
 }
 
 const TIMEOUT_MS = 5 * 60 * 1000;
+// Per tool call inside the chain (upstream default tool timeout).
+const TOOL_TIMEOUT_MS = 120_000;
+const MAX_OUTPUT = 64 * 1024 * 1024;
 
 const PYTHON_PREAMBLE = `import sys, json, os
 
@@ -44,7 +47,7 @@ def grep(pattern, path=None, include=None, reason=""):
     import re
     results = []
     for line in raw.strip().split("\\n"):
-        m = re.match(r'^(.*?):(\d+):(.*)', line)
+        m = re.match(r'^(.*?):(\\d+):(.*)', line)
         if m:
             results.append({"file": m.group(1), "line": int(m.group(2)), "text": m.group(3)})
     return results
@@ -84,10 +87,6 @@ def delete_file(path):
 
 `;
 
-function hasStdout(err: unknown): err is { stdout: unknown } {
-  return err !== null && typeof err === 'object' && 'stdout' in err;
-}
-
 type ToolHandler = (params: Record<string, unknown>) => Promise<string>;
 
 function makeToolHandlers(cwd: string): Map<string, ToolHandler> {
@@ -118,32 +117,32 @@ function makeToolHandlers(cwd: string): Map<string, ToolHandler> {
     return 'deleted';
   });
 
+  // Upstream runs each tool call inside the chain with the default tool
+  // timeout (120 s); the whole chain is capped at 5 minutes. Async so a long
+  // command doesn't block the MCP server.
   handlers.set('bash', async (p) => {
-    const { execSync } = await import('child_process');
-    try {
-      const out = execSync(String(p['command']), { cwd, timeout: 30000, encoding: 'utf8' });
-      return out;
-    } catch (err: unknown) {
-      if (hasStdout(err)) {
-        return String((err as { stdout: unknown }).stdout ?? '');
-      }
-      throw err;
-    }
+    const { exec } = await import('child_process');
+    return new Promise<string>((resolve, reject) => {
+      exec(String(p['command']), { cwd, timeout: TOOL_TIMEOUT_MS, maxBuffer: MAX_OUTPUT, encoding: 'utf8' }, (err, stdout) => {
+        if (err?.killed) reject(new Error(`command timed out after ${TOOL_TIMEOUT_MS / 1000} seconds`));
+        else if (err && !stdout) reject(err);
+        else resolve(stdout); // non-zero exit: return what the command printed
+      });
+    });
   });
 
   handlers.set('grep', async (p) => {
-    const { execSync } = await import('child_process');
-    const pattern = String(p['pattern']);
-    const searchPath = p['path'] ? String(p['path']) : cwd;
-    const include = p['include'] ? `--include="${p['include']}"` : '';
-    try {
-      const out = execSync(`rg -n ${include} "${pattern}" "${searchPath}"`, {
-        cwd, timeout: 10000, encoding: 'utf8'
+    const { execFile } = await import('child_process');
+    const args = ['-n'];
+    if (p['include']) args.push('-g', String(p['include']));
+    args.push('--', String(p['pattern']), p['path'] ? String(p['path']) : cwd);
+    return new Promise<string>((resolve, reject) => {
+      execFile('rg', args, { cwd, timeout: TOOL_TIMEOUT_MS, maxBuffer: MAX_OUTPUT, encoding: 'utf8' }, (err, stdout) => {
+        // rg exits 1 when nothing matches
+        if (err && (err as { code?: unknown }).code !== 1) reject(err);
+        else resolve(stdout ?? '');
       });
-      return out;
-    } catch {
-      return '';
-    }
+    });
   });
 
   handlers.set('glob_files', async (p) => {

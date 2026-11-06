@@ -21,6 +21,7 @@ description: |
   </commentary>
   </example>
 model: inherit
+maxTurns: 100
 color: white
 ---
 
