@@ -8,6 +8,7 @@ Earlier changes are in the [git history](https://github.com/back1ply/vix-cc/comm
 Synced with upstream vix `e68a25c` (2026-09-23).
 
 ### Added
+- Brain (upstream's live "Frequently Accessed Files"): hooks log file accesses per project and add the top 10 files, minified and packed under Claude Code's 10,000-character hook limit, to each new session. `test/brain.test.mjs`; CI runs both hooks without `node_modules`.
 - Agents carry upstream's turn limits (`maxTurns`: explore 25, reviewer and code-explorer 40, others 100).
 - `test/toolchain.test.mjs`; CI smoke-tests the bundled server with `node_modules` deleted.
 - `vix-code-explorer` agent (upstream `code-explorer`).

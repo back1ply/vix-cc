@@ -34,3 +34,7 @@ jobs:
           npm run smoke | tee smoke.json
           grep -q 'pool.shutdown()' smoke.json
           ! grep -q '"isError": true' smoke.json
+          # brain hooks also run without node_modules
+          echo '{"tool_name":"Read","tool_input":{"file_path":"test/fixtures/tmp.kt"}}' | CLAUDE_PROJECT_DIR="$PWD" CLAUDE_PLUGIN_DATA="$RUNNER_TEMP" node ../hooks/brain-log.mjs
+          echo '{}' | CLAUDE_PROJECT_DIR="$PWD" CLAUDE_PLUGIN_DATA="$RUNNER_TEMP" node dist/brain-context.mjs | tee brain.json
+          grep -q 'Frequently Accessed Files' brain.json

@@ -19,17 +19,19 @@ cd mcp-server && npm test
 
 `dist/` and `grammars/` are committed. The plugin runs `dist/server.mjs`, which needs no `node_modules`: Claude Code only auto-installs npm packages when `package.json` is at the plugin root, and ours is in `mcp-server/`. CI checks both folders are up to date and smoke-tests the bundle with `node_modules` deleted. Do not add a root `package.json`.
 
-`npm test` runs `test/golden.test.mjs` (upstream vix's minifier golden files: byte-identical output and idempotency, both comment modes) `test/edit.test.mjs` (upstream's edit-projection cases plus vix-cc checks) and `test/toolchain.test.mjs` (needs `python` and `rg`). Any minifier change must keep all golden tests passing. There is no lint script.
+`npm test` runs `test/golden.test.mjs` (upstream vix's minifier golden files: byte-identical output and idempotency, both comment modes) `test/edit.test.mjs` (upstream's edit-projection cases plus vix-cc checks) `test/toolchain.test.mjs` (needs `python` and `rg`) and `test/brain.test.mjs` (runs both brain hooks as processes). Any minifier change must keep all golden tests passing. There is no lint script.
 
 ## Architecture
 
-This is a Claude Code plugin with three component types that Claude Code auto-discovers:
+This is a Claude Code plugin with four component types that Claude Code auto-discovers:
 
 **Agents** (`agents/*.md`) — Markdown files with YAML frontmatter (`name`, `model`, `description`, `tools`, `color`). The `description` field controls when FleetView auto-triggers the agent. The body is the agent's system prompt. Ported word-for-word from [get-vix/vix](https://github.com/get-vix/vix) `internal/config/defaults/agents/`, adapting vix daemon tool names (`read_file` → `Read`, `glob_files` → `Glob`, etc.) for Claude Code.
 
 **Upstream sync point:** get-vix/vix `e68a25c` (2026-09-23). To check for new upstream changes, compare `e68a25c...main` on `internal/config/defaults/` and `internal/daemon/` (tools, vfs, treesitter). Upstream features tied to the vix daemon/TUI (hooks, jobs, vix-help, workflow-authoring skills, whiteboard, auto-titles) are not ported.
 
 **Skills** (`skills/*/SKILL.md`) — Each subdirectory with a `SKILL.md` is a skill. Invoked via `/skill-name` slash commands.
+
+**Hooks** (`hooks/hooks.json`) — the brain (port of upstream's access stats + "Frequently Accessed Files" system-prompt block). `hooks/brain-log.mjs` (async PostToolUse, plain Node, no deps) appends `{p, t, ts}` lines to `${CLAUDE_PLUGIN_DATA}/brain/<sha1(project)[:16]>.jsonl`, project files only. `src/brain-context.ts` → bundled `dist/brain-context.mjs` (SessionStart) ranks by count, applies upstream's 500→400-line cut, minifies, and packs into 9,000 chars (Claude Code caps hook context at 10,000). `logFileFor()` is duplicated in both files and must stay in sync. Upstream's project summary (`brain/semantic.go`) is dead code there and is not ported.
 
 **MCP server** (`mcp-server/`) — A Node.js stdio MCP server exposing 5 tools. Entry point is `src/index.ts` which holds session state and dispatches to handlers:
 

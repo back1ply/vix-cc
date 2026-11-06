@@ -47,9 +47,14 @@ for (const [pkg, file] of WASM) {
   copy(join(nm, pkg, 'LICENSE'), join(out, 'licenses', pkg.replace('/', '__') + '.LICENSE'));
 }
 
+// dist/server.mjs (MCP server) and dist/brain-context.mjs (SessionStart hook)
 await build({
-  entryPoints: [join(root, 'src', 'index.ts')],
-  outfile: join(root, 'dist', 'server.mjs'),
+  entryPoints: {
+    server: join(root, 'src', 'index.ts'),
+    'brain-context': join(root, 'src', 'brain-context.ts'),
+  },
+  outdir: join(root, 'dist'),
+  outExtension: { '.js': '.mjs' },
   bundle: true,
   platform: 'node',
   format: 'esm',
@@ -59,4 +64,4 @@ await build({
   banner: { js: "import { createRequire as __vixCreateRequire } from 'module'; const require = __vixCreateRequire(import.meta.url);" },
   logLevel: 'warning',
 });
-console.log(`[bundle] grammars/ (${WASM.length} wasm) and dist/server.mjs written`);
+console.log(`[bundle] grammars/ (${WASM.length} wasm), dist/server.mjs and dist/brain-context.mjs written`);

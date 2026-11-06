@@ -1,7 +1,7 @@
 {
   "name": "vix-mcp-server",
   "version": "1.0.0",
-  "description": "MCP server for vix-cc — token-efficient AI coding tools",
+  "description": "MCP server for vix-cc \u2014 token-efficient AI coding tools",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -9,7 +9,7 @@
     "postbuild": "node --input-type=module -e \"import('./sync-local.mjs').catch(()=>{})\"",
     "dev": "tsc --watch",
     "probe": "npx -y @modelcontextprotocol/inspector@2.11.0 --cli node dist/server.mjs --method tools/list",
-    "test": "node test/golden.test.mjs && node test/edit.test.mjs && node test/toolchain.test.mjs",
+    "test": "node test/golden.test.mjs && node test/edit.test.mjs && node test/toolchain.test.mjs && node test/brain.test.mjs",
     "smoke": "npx -y @modelcontextprotocol/inspector@2.11.0 --cli node dist/server.mjs --method tools/call --tool-name vix_read_minified --tool-arg path=test/fixtures/tmp.kt --tool-arg reason=smoke"
   },
   "dependencies": {

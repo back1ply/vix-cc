@@ -12,6 +12,7 @@ Synced with upstream vix at [`e68a25c`](https://github.com/get-vix/vix/commit/e6
 - **Background jobs**: `vix_background_bash` spawns detached processes and returns poll instructions
 - **Batch tool chains**: `vix_tool_chain` runs a Python script that chains file operations in one round-trip
 - **Behavioral skills**: Tool discipline, read-before-edit, reason-first, dependency-ordered todos
+- **Brain**: remembers which files you use most in each project and adds them (minified) to every new session, like vix's "Frequently Accessed Files"
 
 ## Installation
 
@@ -64,6 +65,20 @@ All agents use the session's model (`model: inherit`), as upstream vix does.
 | `vix-read-before-edit` | `/vix-read-before-edit` | Never edit a file not read this session |
 | `vix-reason-first` | `/vix-reason-first` | State intent before each tool call |
 | `vix-todo-deps` | `/vix-todo-deps` | Dependency-ordered task execution, one in-progress at a time |
+
+## Brain
+
+Port of vix's live brain feature, "Frequently Accessed Files". Two hooks (`hooks/hooks.json`):
+
+- **After each file tool call** (`Read`, `Edit`, `Write`, `MultiEdit`, `NotebookEdit`, and the `vix_*_minified` tools), `hooks/brain-log.mjs` records the file in a per-project log. It runs in the background and only records files inside the project.
+- **At session start** (also after `/clear`, resume and compaction), `mcp-server/dist/brain-context.mjs` ranks files by how often they were used and adds the top 10 to the session: files over 500 lines keep their first 400, as in vix, and contents are minified.
+
+Differences from vix:
+- Claude Code caps a hook's added context at 10,000 characters, so files are packed into about 9,000 characters and the rest are listed by path.
+- The log is kept in the plugin's data folder (`~/.claude/plugins/data/<plugin>/brain/`), not in a `.vix/` folder in each project. Without that folder it falls back to `<project>/.vix/`, with a `.gitignore` so it stays out of git.
+- vix's docs also describe a project scan with an AI-written summary. In vix's code that step is never called, so it isn't ported.
+
+To reset a project's ranking, delete its log file from the brain folder.
 
 ## MCP Tools
 
@@ -149,6 +164,9 @@ return counts
 vix-cc/
 ├── .claude-plugin/
 │   └── plugin.json              — registers MCP server (mcpServers: vix)
+├── hooks/
+│   ├── hooks.json               — brain hooks (PostToolUse log, SessionStart context)
+│   └── brain-log.mjs            — file access logger (no dependencies)
 ├── agents/
 │   ├── vix-explore.md
 │   ├── vix-code-explorer.md

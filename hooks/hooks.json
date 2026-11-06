@@ -1,0 +1,28 @@
+{
+  "description": "vix brain: log file accesses, and add the most-used files to each new session (port of vix's Frequently Accessed Files).",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Read|Edit|Write|MultiEdit|NotebookEdit|mcp__plugin_vix_vix__vix_read_minified|mcp__plugin_vix_vix__vix_edit_minified|mcp__plugin_vix_vix__vix_write_minified",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/brain-log.mjs\"",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/mcp-server/dist/brain-context.mjs\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
