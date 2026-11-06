@@ -1,7 +1,8 @@
 import { spawn } from 'child_process';
 import { readFile, writeFile, unlink } from 'fs/promises';
 import { tmpdir } from 'os';
-import { join, resolve } from 'path';
+import { delimiter, join, resolve } from 'path';
+import { existsSync } from 'fs';
 import { randomBytes } from 'crypto';
 import { createInterface } from 'readline';
 const TIMEOUT_MS = 5 * 60 * 1000;
@@ -149,6 +150,20 @@ function makeToolHandlers(cwd) {
     });
     return handlers;
 }
+// Upstream runs `python3`. Prefer it, falling back to `python` (Windows
+// installs usually only have `python`; macOS and many Linux distros only
+// `python3`).
+function findPython() {
+    const candidates = process.platform === 'win32' ? ['python', 'python3'] : ['python3', 'python'];
+    const exts = process.platform === 'win32' ? (process.env.PATHEXT ?? '.EXE').split(';') : [''];
+    for (const name of candidates) {
+        for (const dir of (process.env.PATH ?? '').split(delimiter)) {
+            if (dir && exts.some((ext) => existsSync(join(dir, name + ext.toLowerCase()))))
+                return name;
+        }
+    }
+    return candidates[0];
+}
 export async function handleToolChain(args) {
     const { workflow } = args;
     const cwd = process.cwd();
@@ -172,8 +187,9 @@ except Exception as _exc:
     const tmpFile = join(tmpdir(), `vix-chain-${randomBytes(4).toString('hex')}.py`);
     await writeFile(tmpFile, script, 'utf8');
     const handlers = makeToolHandlers(cwd);
+    const python = findPython();
     return new Promise((resolve, reject) => {
-        const child = spawn('python', [tmpFile], {
+        const child = spawn(python, [tmpFile], {
             cwd,
             stdio: ['pipe', 'pipe', 'pipe'],
         });

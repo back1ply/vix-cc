@@ -16,6 +16,8 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: mcp-server/package-lock.json
+      # vix_tool_chain's grep uses ripgrep
+      - run: sudo apt-get install -y ripgrep
       # grammars ship prebuilt .wasm; skip their native build scripts
       - run: npm ci --ignore-scripts
       # tsc + bundle (postbuild's local-only helper is absent on CI and skipped)

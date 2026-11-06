@@ -21,6 +21,10 @@ const wf = [
 ].join('\n');
 const out = JSON.parse(await handleToolChain({ workflow: wf, description: 'test' }));
 const res = out.result ?? out;
+if (typeof res !== 'object' || res === null) {
+  console.log('FAIL tool chain returned an error:\n' + res);
+  process.exit(1);
+}
 let fail = 0;
 const ok = (name, cond) => { if (!cond) { fail++; console.log('FAIL ' + name + '\n  ' + JSON.stringify(res)); } };
 ok('grep include filters files', JSON.stringify(res.grep).includes('a.py') && !JSON.stringify(res.grep).includes('b.js'));

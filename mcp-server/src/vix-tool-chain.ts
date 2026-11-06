@@ -1,7 +1,8 @@
 import { spawn } from 'child_process';
 import { readFile, writeFile, unlink } from 'fs/promises';
 import { tmpdir } from 'os';
-import { join, resolve } from 'path';
+import { delimiter, join, resolve } from 'path';
+import { existsSync } from 'fs';
 import { randomBytes } from 'crypto';
 import { createInterface } from 'readline';
 
@@ -161,6 +162,20 @@ function makeToolHandlers(cwd: string): Map<string, ToolHandler> {
   return handlers;
 }
 
+// Upstream runs `python3`. Prefer it, falling back to `python` (Windows
+// installs usually only have `python`; macOS and many Linux distros only
+// `python3`).
+function findPython(): string {
+  const candidates = process.platform === 'win32' ? ['python', 'python3'] : ['python3', 'python'];
+  const exts = process.platform === 'win32' ? (process.env.PATHEXT ?? '.EXE').split(';') : [''];
+  for (const name of candidates) {
+    for (const dir of (process.env.PATH ?? '').split(delimiter)) {
+      if (dir && exts.some((ext) => existsSync(join(dir, name + ext.toLowerCase())))) return name;
+    }
+  }
+  return candidates[0];
+}
+
 export async function handleToolChain(args: ToolChainArgs): Promise<string> {
   const { workflow } = args;
   const cwd = process.cwd();
@@ -188,8 +203,10 @@ except Exception as _exc:
 
   const handlers = makeToolHandlers(cwd);
 
+  const python = findPython();
+
   return new Promise((resolve, reject) => {
-    const child = spawn('python', [tmpFile], {
+    const child = spawn(python, [tmpFile], {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
     });

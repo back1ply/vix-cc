@@ -21811,7 +21811,8 @@ function killAllJobs(bashJobs2) {
 import { spawn as spawn3 } from "child_process";
 import { readFile as readFile3, writeFile as writeFile4, unlink } from "fs/promises";
 import { tmpdir as tmpdir2 } from "os";
-import { join as join4, resolve } from "path";
+import { delimiter as delimiter2, join as join4, resolve } from "path";
+import { existsSync } from "fs";
 import { randomBytes as randomBytes2 } from "crypto";
 import { createInterface } from "readline";
 var TIMEOUT_MS = 5 * 60 * 1e3;
@@ -21947,6 +21948,16 @@ function makeToolHandlers(cwd) {
   });
   return handlers;
 }
+function findPython() {
+  const candidates = process.platform === "win32" ? ["python", "python3"] : ["python3", "python"];
+  const exts = process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE").split(";") : [""];
+  for (const name2 of candidates) {
+    for (const dir of (process.env.PATH ?? "").split(delimiter2)) {
+      if (dir && exts.some((ext) => existsSync(join4(dir, name2 + ext.toLowerCase())))) return name2;
+    }
+  }
+  return candidates[0];
+}
 async function handleToolChain(args2) {
   const { workflow } = args2;
   const cwd = process.cwd();
@@ -21969,8 +21980,9 @@ except Exception as _exc:
   const tmpFile = join4(tmpdir2(), `vix-chain-${randomBytes2(4).toString("hex")}.py`);
   await writeFile4(tmpFile, script, "utf8");
   const handlers = makeToolHandlers(cwd);
+  const python = findPython();
   return new Promise((resolve2, reject) => {
-    const child = spawn3("python", [tmpFile], {
+    const child = spawn3(python, [tmpFile], {
       cwd,
       stdio: ["pipe", "pipe", "pipe"]
     });
