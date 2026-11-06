@@ -4,7 +4,7 @@
 // - dist/server.mjs: src/index.ts and all its npm dependencies in one file
 // Run after tsc (see "build" in package.json).
 import { build } from 'esbuild';
-import { copyFileSync, mkdirSync, rmSync } from 'fs';
+import { chmodSync, copyFileSync, mkdirSync, rmSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -36,9 +36,15 @@ const WASM = [
 
 rmSync(out, { recursive: true, force: true });
 mkdirSync(join(out, 'licenses'), { recursive: true });
+// Copy with a fixed, non-executable mode: some packages ship files marked
+// executable on Linux, which would make CI's "grammars up to date" check fail.
+const copy = (from, to) => {
+  copyFileSync(from, to);
+  chmodSync(to, 0o644);
+};
 for (const [pkg, file] of WASM) {
-  copyFileSync(join(nm, pkg, file), join(out, file));
-  copyFileSync(join(nm, pkg, 'LICENSE'), join(out, 'licenses', pkg.replace('/', '__') + '.LICENSE'));
+  copy(join(nm, pkg, file), join(out, file));
+  copy(join(nm, pkg, 'LICENSE'), join(out, 'licenses', pkg.replace('/', '__') + '.LICENSE'));
 }
 
 await build({
