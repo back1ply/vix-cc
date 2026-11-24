@@ -1,7 +1,7 @@
 # Changelog
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Earlier changes are in the [git history](https://github.com/back1ply/vix-cc/commits/master).
+Earlier changes are in the [git history](https://github.com/back1ply/vix-cc/commits/main).
 
 ## [Unreleased]
 
